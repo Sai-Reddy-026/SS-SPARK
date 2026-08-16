@@ -1,0 +1,143 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works?mailto=example%40papercrow.ai&query.title=Augmenting+large+language+models+with+chemistry+tools&rows=1&select=DOI%2Cauthor%2Ccontainer-title%2Ctitle
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/7VTTXObMBD9K4zOCAuwieNbYl98SN1pDj3EOezAApoIiUpLHI/H/70L0yZOp4fk
+          EA6M2I+3b3l6JxEIaAhiJdyTiEWHIUCDko49cuzg/JM0OtBF6hl90M5yNk1Uot4yYnUSNZRIjHY6
+          x4IcgZEew2DGULZQ12m6iIUm7Pj74SQ2u+0Io5JU5cv9LMyzbFFIlc2lUss8k0sGh4Fa56fyRj/j
+          OPfGVozKuRo6bY4cuUuiWw+WQwF/DWjLkXyt/UQc6lobDTSRfng8x29I99Bdwqzdy3sIqCo99oH5
+          P87ux3q74bqWqA+r/Ww/c77UVeJ8s58pfngRlUuVp3xaLtI/+6AlXQJhJadysarBBIxfae0MH/wl
+          s/uy1Yam2Cfo/cVbgzfuEu4WTAUsmtdfsG8mi2J+JfPrYvHBfSdBD9EmueT4s+WL8iVy5GpeyGJx
+          VXyQ3nf+97rv8R9BDmDMpxR5jEXpLIG26CVpMtzxIL6x/zxGd8ASW4y2ltAY3UyA3PFadzM03cjU
+          NpEB3yC/bTOw76LOVWhCdNDURmWLHfvVHyNyzgQxTZ0cJ3ue2k8+TWPBjP1xdCz735PUtsIXsVLj
+          MuDLVvJdG01qB2PO5/NvweCJYycEAAA=
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "479"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:23 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works?mailto=example%40papercrow.ai&query.title=Beta-Blocker+Interruption+or+Continuation+after+Myocardial+Infarction&rows=1&query.author=Johanne+Silvain&select=DOI%2Cauthor%2Ccontainer-title%2Ctitle
+    response:
+      body:
+        string: !!binary |
+          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
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "1691"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:25 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+version: 1

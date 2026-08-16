@@ -1,0 +1,298 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works?mailto=example%40papercrow.ai&query.title=Augmenting+large+language+models+with+chemistry+tools.&rows=1&query.author=Jack+NoScience&select=DOI%2Cauthor%2Ctitle
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/8WTTXPTMBCG/4pGZyuRYxNIbm2TQwqlDKVcmh629trRVJaMtC6EjP87K8NAOQEn
+          LprZD727+8zuSUYCGqJcS/8oM9lhjNCiomOP7Pvsw6OyJtKz0BOGaLzjaD7TM/0rItcn2UCFxGqn
+          MZPkCawKGAebXGXxaplJQ9ixcXeSm+td0tCzoljp/Rz6Pn+RL5bLYsmSMNDBhynv+v3FbsOZB6I+
+          rvfz/dyHytQzH9r9XGu9UvwsVFnkhcoX5erHb3RkKiCs1ZQu1w3YiJlszROm5i+hSgM30Bl7ZPu1
+          t+geArgaA/sjfhrQVQlCY8IEAJrGWAM0Dc+NOehS+DxAbfEoNthDoI7rCt+IrcWKAndgBUuKC9/1
+          A2EQW9cahxiMazPx0QS2DIgPWB0ycW65p/gwhBQ6E4tSL/NM3N6cyfF+zP5MQicShVqUxUtVlLn+
+          SxJnFpy4nD2HcWWqA6CNv4OAujZperD/mUb2s9xb+N6QuMFqCIaOYuciGWL1f8N7z/tqyLLmnXzH
+          G55Ek9y2G+xUQ9wSz/uVOxVvILTIr2sHXntx5euEatKY1lv1GFQ/XUSeScYXjuk2+NICKcML9kWu
+          dSILoToo5pAuwg3WjuP4DZbpyjSRAwAA
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "480"
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 11 Sep 2025 17:38:04 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/search/match?query=Augmenting+large+language+models+with+chemistry+tools.&fields=authors%2CexternalIds%2Ctitle
+    response:
+      body:
+        string:
+          '{"data": [{"paperId": "354dcdebf3f8b5feeed5c62090e0bc1f0c28db06", "externalIds":
+          {"DBLP": "journals/natmi/BranCSBWS24", "ArXiv": "2304.05376", "PubMedCentral":
+          "11116106", "DOI": "10.1038/s42256-024-00832-8", "CorpusId": 258059792, "PubMed":
+          "38799228"}, "title": "Augmenting large language models with chemistry tools",
+          "authors": [{"authorId": "2216007369", "name": "Andr\u00e9s M Bran"}, {"authorId":
+          "2161337138", "name": "Sam Cox"}, {"authorId": "1820929773", "name": "Oliver
+          Schilter"}, {"authorId": "2251414370", "name": "Carlo Baldassari"}, {"authorId":
+          "2150199535", "name": "Andrew D. White"}, {"authorId": "1379965853", "name":
+          "P. Schwaller"}], "matchScore": 178.26385}]}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "684"
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 11 Sep 2025 17:38:04 GMT
+        Via:
+          - 1.1 0ac5a786563da4ae2e2a28a1fe210e04.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - 4ZJfDYGcp5wAyZUvLVGUBT3UKXCibwoF6zHc9nkigvXgYSm_5T1pVw==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - Qv5XdE5kPHcECpQ=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "684"
+        x-amzn-Remapped-Date:
+          - Thu, 11 Sep 2025 17:38:04 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - 6f4e483e-c5ad-422d-91b4-cb69fec66841
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/search/match?query=Augmenting+large+language+models+with+chemistry+tools.&fields=authors%2CexternalIds%2Ctitle
+    response:
+      body:
+        string:
+          '{"data": [{"paperId": "354dcdebf3f8b5feeed5c62090e0bc1f0c28db06", "externalIds":
+          {"DBLP": "journals/natmi/BranCSBWS24", "ArXiv": "2304.05376", "PubMedCentral":
+          "11116106", "DOI": "10.1038/s42256-024-00832-8", "CorpusId": 258059792, "PubMed":
+          "38799228"}, "title": "Augmenting large language models with chemistry tools",
+          "authors": [{"authorId": "2216007369", "name": "Andr\u00e9s M Bran"}, {"authorId":
+          "2161337138", "name": "Sam Cox"}, {"authorId": "1820929773", "name": "Oliver
+          Schilter"}, {"authorId": "2251414370", "name": "Carlo Baldassari"}, {"authorId":
+          "2150199535", "name": "Andrew D. White"}, {"authorId": "1379965853", "name":
+          "P. Schwaller"}], "matchScore": 178.26385}]}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "684"
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 11 Sep 2025 17:38:05 GMT
+        Via:
+          - 1.1 0ac5a786563da4ae2e2a28a1fe210e04.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - qb8P3yEIkzlBcgmB4QAzWYqjPwKBSCWxcDlV39KmGXVv8SwOJjAwCQ==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - Qv5XjG6uvHcEBfg=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "684"
+        x-amzn-Remapped-Date:
+          - Thu, 11 Sep 2025 17:38:05 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - c6d4913a-0f90-486e-8929-a21cccf0b180
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/search/match?query=Augmenting+large+language+models+with+chemistry+tools.&fields=authors%2CexternalIds%2Ctitle
+    response:
+      body:
+        string:
+          '{"data": [{"paperId": "354dcdebf3f8b5feeed5c62090e0bc1f0c28db06", "externalIds":
+          {"DBLP": "journals/natmi/BranCSBWS24", "ArXiv": "2304.05376", "PubMedCentral":
+          "11116106", "DOI": "10.1038/s42256-024-00832-8", "CorpusId": 258059792, "PubMed":
+          "38799228"}, "title": "Augmenting large language models with chemistry tools",
+          "authors": [{"authorId": "2216007369", "name": "Andr\u00e9s M Bran"}, {"authorId":
+          "2161337138", "name": "Sam Cox"}, {"authorId": "1820929773", "name": "Oliver
+          Schilter"}, {"authorId": "2251414370", "name": "Carlo Baldassari"}, {"authorId":
+          "2150199535", "name": "Andrew D. White"}, {"authorId": "1379965853", "name":
+          "P. Schwaller"}], "matchScore": 178.26385}]}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "684"
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 11 Sep 2025 17:38:05 GMT
+        Via:
+          - 1.1 0ac5a786563da4ae2e2a28a1fe210e04.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - 1NlPpTre8eGbGtTOdMmQ47aUsZmE-8n7RVTtKJKQ7hN5iD8EnUtxBQ==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - Qv5XpGVNvHcEJgw=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "684"
+        x-amzn-Remapped-Date:
+          - Thu, 11 Sep 2025 17:38:05 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - da290116-3a4a-4800-88b3-f642c11bdb4b
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.48550%2FarXiv.2304.05376/transform/application/x-bibtex
+    response:
+      body:
+        string: Resource not found.
+      headers:
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/plain;charset=utf-8
+        Date:
+          - Thu, 11 Sep 2025 17:38:06 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 404
+        message: Not Found
+version: 1

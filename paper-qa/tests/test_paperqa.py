@@ -1,0 +1,3985 @@
+import asyncio
+import contextlib
+import csv
+import io
+import json
+import pathlib
+import pickle
+import random
+import re
+import string
+import sys
+from collections.abc import AsyncIterable, Sequence
+from copy import deepcopy
+from datetime import datetime, timedelta
+from functools import partial
+from io import BytesIO
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import MagicMock, call, patch
+from uuid import UUID, uuid4
+
+import anyio
+import httpx
+import litellm
+import litellm.llms.anthropic.common_utils
+import numpy as np
+import pytest
+import pytest_asyncio
+from aviary.core import Message
+from lmi import (
+    CommonLLMNames,
+    Embeddable,
+    EmbeddingModel,
+    HybridEmbeddingModel,
+    LiteLLMEmbeddingModel,
+    LiteLLMModel,
+    LLMModel,
+    LLMResult,
+    SparseEmbeddingModel,
+)
+from lmi.llms import rate_limited
+from lmi.utils import VCR_DEFAULT_MATCH_ON, validate_image
+from paperqa_docling import parse_pdf_to_pages as docling_parse_pdf_to_pages
+from paperqa_nemotron import parse_pdf_to_pages as nemotron_parse_pdf_to_pages
+from paperqa_pymupdf import parse_pdf_to_pages as pymupdf_parse_pdf_to_pages
+from paperqa_pypdf import parse_pdf_to_pages as pypdf_parse_pdf_to_pages
+from pydantic import ValidationError
+from pytest_subtests import SubTests
+
+from paperqa import (
+    Doc,
+    DocDetails,
+    Docs,
+    NumpyVectorStore,
+    PQASession,
+    QdrantVectorStore,
+    Settings,
+    Text,
+    VectorStore,
+)
+from paperqa.clients import CrossrefProvider
+from paperqa.clients.journal_quality import JournalQualityPostProcessor
+from paperqa.core import (
+    LLMContextTimeoutError,
+    _map_fxn_summary,
+    llm_parse_json,
+    map_fxn_summary,
+)
+from paperqa.prompts import CANNOT_ANSWER_PHRASE, summary_json_multimodal_system_prompt
+from paperqa.prompts import qa_prompt as default_qa_prompt
+from paperqa.readers import (
+    PDFParserFn,
+    chunk_pdf,
+    parse_image,
+    read_doc,
+    resolve_page_range,
+)
+from paperqa.settings import (
+    AnswerSettings,
+    AsyncContextSerializer,
+    MultimodalOptions,
+    ParsingSettings,
+    PromptSettings,
+)
+from paperqa.types import (
+    ChunkMetadata,
+    Context,
+    ParsedMedia,
+    ParsedMetadata,
+    ParsedText,
+)
+from paperqa.utils import (
+    clean_possessives,
+    encode_id,
+    extract_score,
+    maybe_get_date,
+    maybe_is_html,
+    maybe_is_text,
+    name_in_text,
+    strings_similarity,
+    strip_citations,
+)
+
+if TYPE_CHECKING:
+    import vcr.request
+
+THIS_MODULE = pathlib.Path(__file__)
+
+
+@pytest_asyncio.fixture(name="docs_fixture")
+async def fixture_docs_fixture(stub_data_dir: Path) -> Docs:
+    docs = Docs()
+    with (stub_data_dir / "paper.pdf").open("rb") as f:
+        await docs.aadd_file(
+            f,
+            citation="Wellawatte et al, XAI Review, 2023",  # Skip citation inference
+            doi="10.1021/acs.jctc.2c01235",  # Skip DOI inference
+            title="A Perspective on Explanations of Molecular Prediction Models",  # Skip title inference
+        )
+    return docs
+
+
+def test_encode_id() -> None:
+    assert (
+        encode_id("10.1056/nejmoa2119451")
+        == encode_id("10.1056/NEJMOA2119451")
+        == "945f1f30b11bcae6"
+    )
+
+
+def test_single_author() -> None:
+    text = "This was first proposed by (Smith 1999)."
+    assert strip_citations(text) == "This was first proposed by ."
+
+
+def test_multiple_authors() -> None:
+    text = "Recent studies (Smith et al. 1999) show that this is true."
+    assert strip_citations(text) == "Recent studies  show that this is true."
+
+
+def test_multiple_citations() -> None:
+    text = "As discussed by several authors (Smith et al. 1999; Johnson 2001; Lee et al. 2003)."
+    assert strip_citations(text) == "As discussed by several authors ."
+
+
+def test_citations_with_pages() -> None:
+    text = "This is shown in (Smith et al. 1999, p. 150)."
+    assert strip_citations(text) == "This is shown in ."
+
+
+def test_citations_without_space() -> None:
+    text = "Findings by(Smith et al. 1999)were significant."
+    assert strip_citations(text) == "Findings bywere significant."
+
+
+def test_citations_with_commas() -> None:
+    text = "The method was adopted by (Smith, 1999, 2001; Johnson, 2002)."
+    assert strip_citations(text) == "The method was adopted by ."
+
+
+def test_citations_with_text() -> None:
+    text = "This was noted (see Smith, 1999, for a review)."
+    assert strip_citations(text) == "This was noted ."
+
+
+def test_no_citations() -> None:
+    text = "There are no references in this text."
+    assert strip_citations(text) == "There are no references in this text."
+
+
+def test_malformed_citations() -> None:
+    text = "This is a malformed citation (Smith 199)."
+    assert strip_citations(text) == "This is a malformed citation (Smith 199)."
+
+
+def test_edge_case_citations() -> None:
+    text = "Edge cases like (Smith et al.1999) should be handled."
+    assert strip_citations(text) == "Edge cases like  should be handled."
+
+
+def test_citations_with_special_characters() -> None:
+    text = "Some names have dashes (O'Neil et al. 2000; Smith-Jones 1998)."
+    assert strip_citations(text) == "Some names have dashes ."
+
+
+def test_citations_with_nonstandard_chars() -> None:
+    text = (
+        "In non-English languages, citations might look different (Müller et al. 1999)."
+    )
+    assert (
+        strip_citations(text)
+        == "In non-English languages, citations might look different ."
+    )
+
+
+@pytest.mark.vcr
+def test_maybe_is_text() -> None:
+    assert maybe_is_text("This is a test. The sample conc. was 1.0 mM (at 245 ^F)")
+    assert not maybe_is_text("\\C0\\C0\\B1\x00")
+    # get front page of wikipedia
+    r = httpx.get(
+        "https://en.wikipedia.org/wiki/National_Flag_of_Canada_Day",
+        headers={
+            "User-Agent": "PaperQA testing (https://github.com/Future-House/paper-qa)"
+        },
+    )
+    assert maybe_is_text(r.text)
+
+    r_ja = httpx.get(
+        "https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC",
+        headers={
+            "User-Agent": "PaperQA testing (https://github.com/Future-House/paper-qa)"
+        },
+    )
+    assert maybe_is_text(r_ja.text)
+
+    assert maybe_is_html(BytesIO(r.text.encode()))
+
+    # now force it to contain lots of weird encoding
+    bad_text = r.text.encode("latin1", "ignore").decode("utf-16", "ignore")
+    assert not maybe_is_text(bad_text)
+
+    # account for possible spaces in the text due to tables or title pages
+    assert maybe_is_text("entry1                    entry2                    entry3")
+
+    # Test high entropy cases
+    # English text with entropy > 6
+    good_text_high_entropy = string.printable * 10
+    assert maybe_is_text(good_text_high_entropy, thresh=6)
+
+    # English text with entropy > 8
+    bad_text_high_entropy = "".join([chr(i) for i in range(10000, 10300)])
+    assert not maybe_is_text(bad_text_high_entropy)
+
+    # Japanese text with entropy > 8
+    jp_char_ranges = [
+        (0x3040, 0x309F),  # Hiragana
+        (0x30A0, 0x30FF),  # Katakana
+        (0x4E00, 0x9FAF),  # CJK Unified Ideographs
+    ]
+    jp_chars = []
+    for start, end in jp_char_ranges:
+        jp_chars.extend([chr(i) for i in range(start, end + 1)])
+
+    random.shuffle(jp_chars)
+    bad_jp_text_high_entropy = "".join(jp_chars[:400])
+    assert not maybe_is_text(bad_jp_text_high_entropy)
+
+
+def test_name_in_text() -> None:
+    name1 = "FooBar2022"
+    name2 = "FooBar2022a"
+    name3 = "FooBar20"
+
+    text1 = "As mentioned by FooBar2022, this is a great paper"
+    assert name_in_text(name1, text1)
+    assert not name_in_text(name2, text1)
+    assert not name_in_text(name3, text1)
+
+    text2 = "This is great, as found by FooBar20"
+    assert name_in_text(name3, text2)
+    assert not name_in_text(name1, text2)
+    assert not name_in_text(name2, text2)
+
+    text3 = "Per previous work (FooBar2022, FooBar2022a), this is great"
+    assert name_in_text(name1, text3)
+    assert name_in_text(name2, text3)
+    assert not name_in_text(name3, text3)
+
+    text4 = "Per previous work (Foo2022, Bar2023), this is great"
+    assert not name_in_text(name1, text4)
+    assert not name_in_text(name2, text4)
+    assert not name_in_text(name3, text4)
+
+    text5 = "Per previous work (FooBar2022; FooBar2022a), this is great"
+    assert name_in_text(name1, text5)
+    assert name_in_text(name2, text5)
+    assert not name_in_text(name3, text5)
+
+    text6 = "According to FooBar2022 and Foobars, this is great"
+    assert name_in_text(name1, text6)
+    assert not name_in_text(name2, text6)
+    assert not name_in_text(name3, text6)
+
+    text7 = "As stated by FooBar2022.\n\nThis is great"
+    assert name_in_text(name1, text7)
+    assert not name_in_text(name2, text7)
+    assert not name_in_text(name3, text7)
+
+
+def test_extract_score() -> None:
+    sample = """
+    The text describes an experiment where different cell subtypes,
+    including colorectal cancer-associated fibroblasts, were treated with
+    oxaliplatin for 12 days. The concentration of oxaliplatin used was the
+    EC50 for each cell subtype, which was determined individually.
+    The media were changed every 3 days to avoid complete cell death.
+    The text does not provide information about the percentage of colorectal
+    cancer-associated fibroblasts that typically survive at 2 weeks when cultured
+    with oxaliplatin. (0/10)
+    """
+    assert extract_score(sample) == 0
+
+    sample = """
+    COVID-19 vaccinations have been shown to be effective against hospitalization
+    from the Omicron and Delta variants, though effectiveness may decrease over
+    time. A study found that vaccine effectiveness against hospitalization peaked
+    around 82-92% after a third dose but declined to 53-77% 15+ weeks after the third
+    dose, depending on age group and hospitalization definition. Stricter
+    definitions of hospitalization, like requiring oxygen use or ICU admission,
+    showed higher and more sustained vaccine effectiveness. 8
+    """
+
+    assert extract_score(sample) == 8
+
+    sample = """
+    Here is a 100-word summary of the text:
+    The text discusses a phase 3 trial of a combined
+    vector vaccine based on rAd26 and rAd5 vectors carrying the
+    SARS-CoV-2 spike protein gene. The trial aimed to assess the efficacy,
+    immunogenicity and safety of the vaccine against COVID-19 in adults.
+    The study design was a randomized, double-blind, placebo-controlled trial
+    done at 25 hospitals in Moscow, Russia. Eligible participants were 18 years
+    or older with no history of COVID-19. The exclusion criteria ensured
+    participants were healthy and had no contraindications for vaccination.
+    The trial aimed to determine if the vaccine could safely and effectively
+    provide protection against COVID-19. Relevance score: 8
+    """
+
+    assert extract_score(sample) == 8
+
+    sample = """
+    Here is a 100-word summary of the provided text: The text details
+    trial procedures for a COVID-19 vaccine, including screening
+    visits, observation visits to assess vital signs, PCR testing, and
+    telemedicine consultations. Participants who tested positive for
+    COVID-19 during screening were excluded from the trial. During the trial
+    , additional PCR tests were only done when COVID-19 symptoms were reported
+    . An electronic health record platform was in place to record data from
+    telemedicine consultations. The text details the screening and trial
+    procedures but does not provide direct evidence regarding the
+    effectiveness of COVID-19 vaccinations. Score: 3/10
+    """
+
+    assert extract_score(sample) == 3
+
+    sample = """
+    Here is a 100-word summary of the text: The text discusses a
+    phase 3 trial of a COVID-19 vaccine in Russia. The vaccine
+    uses a heterologous prime-boost regimen, providing robust
+    immune responses. The vaccine can be stored at -18°C and
+    2-8°C. The study reports 91.6% efficacy against COVID-19 based on
+    interim analysis of over 21,000 participants. The authors
+    compare their results to other published COVID-19 vaccine
+    efficacy data. They previously published safety and immunogenicity
+    results from phase 1/2 trials of the same vaccine. Relevance score:
+    8/10. The text provides details on the efficacy and immune response
+    generated by one COVID-19 vaccine in a large phase 3 trial, which is
+    relevant evidence to help answer the question regarding effectiveness
+    of COVID-19 vaccinations.
+    """
+
+    assert extract_score(sample) == 8
+
+    sample = """
+    Here is a 100-word summary of the text: The text discusses the safety and
+    efficacy of the BNT162b2 mRNA Covid-19 vaccine. The study found that
+    the vaccine was well tolerated with mostly mild to moderate side
+    effects. The vaccine was found to be highly effective against Covid-19,
+    with an observed vaccine efficacy of 90.5% after the second dose.
+    Severe Covid-19 cases were also reduced among vaccine recipients.
+    The vaccine showed an early protective effect after the first dose
+    and reached full efficacy 7 days after the second dose. The favorable
+    safety and efficacy results provide evidence that the BNT162b2 vaccine
+    is effective against Covid-19. The text provides data on the efficacy
+    and safety results from a clinical trial of the BNT162b2 Covid-19 vaccine,
+    which is highly relevant to answering the question about the effectiveness
+    of Covid-19 vaccinations.
+    """
+
+    with pytest.raises(ValueError, match="Failed to extract score"):
+        extract_score(sample)
+
+    sample = """
+    Introduce dynamic elements such as moving nodes or edges to create a sense of activity within
+    the network. 2. Add more nodes and connections to make the network
+    appear more complex and interconnected. 3. Incorporate both red and
+    green colors into the network, as the current screenshot only shows
+    green lines. 4. Vary the thickness of the lines to add depth and
+    visual interest. 5. Implement different shades of red and green to
+    create a gradient effect for a more visually appealing experience.
+    6. Consider adding a background color or pattern to enhance the
+    contrast and make the network stand out. 7. Introduce interactive
+    elements that allow users to manipulate the network, such as
+    dragging nodes or zooming in/out. 8. Use animation effects like
+    pulsing or changing colors to highlight certain parts of the network
+    or to show activity. 9. Add labels or markers to provide information
+      about the nodes or connections, if relevant to the purpose of the
+        network visualization. 10. Consider the use of algorithms that
+        organize the network in a visually appealing manner, such as
+        force-directed placement or hierarchical layouts. 3/10 """
+
+    assert extract_score(sample) == 3
+
+    sample = (
+        "The text mentions a work by Shozo Yokoyama titled "
+        '"Evolution of Dim-Light and Color Vision Pigments". '
+        "This work, published in the Annual Review of Genomics and "
+        "Human Genetics, discusses the evolution of human color vision. "
+        "However, the text does not provide specific details or findings "
+        "from Yokoyama's work. \n"
+        "Relevance Score: 7"
+    )
+
+    assert extract_score(sample) == 7
+
+    sample = (
+        "The evolution of human color vision is "
+        "closely tied to theories about the nature "
+        "of light, dating back to the 17th to 19th "
+        "centuries. Initially, there was no clear distinction "
+        "between the properties of light, the eye and retina, "
+        "and color percepts. Major figures in science attempted "
+        "to resolve these issues, with physicists leading most "
+        "advances in color science into the 20th century. Prior "
+        "to Newton, colors were viewed as stages between black "
+        "and white. Newton was the first to describe colors in "
+        "a modern sense, using prisms to disperse light into "
+        "a spectrum of colors. He demonstrated that each color "
+        "band could not be further divided and that different "
+        "colors had different refrangibility. \n"
+        "Relevance Score: 9.5"
+    )
+
+    assert extract_score(sample) == 9
+
+
+@pytest.mark.asyncio
+async def test_chain_completion(caplog) -> None:
+    caplog.set_level(level="WARNING", logger="lmi.types")
+
+    s = Settings(llm="babbage-002", temperature=0.2)
+    outputs = []
+
+    def accum(x) -> None:
+        outputs.append(x)
+
+    llm = s.get_llm()
+    messages = [Message(content="The duck says")]
+
+    # With callbacks, we use streaming
+    completion = await llm.call_single(messages=messages, callbacks=[accum])
+    first_id = completion.id
+    assert isinstance(first_id, UUID)
+    assert completion.text
+    assert completion.seconds_to_first_token > 0
+    assert completion.prompt_count is not None
+    assert completion.prompt_count > 0
+    assert completion.completion_count is not None
+    assert completion.completion_count > 0
+    assert completion.model == "babbage-002"
+    assert str(completion) == "".join(outputs)
+    assert completion.cost > 0
+    assert not caplog.records
+
+    # Without callbacks, we don't use streaming
+    completion = await llm.call_single(messages=messages)
+    assert isinstance(completion.id, UUID)
+    assert completion.id != first_id, "Expected different response ID"
+    assert completion.text
+    assert completion.seconds_to_first_token == 0
+    assert completion.seconds_to_last_token > 0
+    assert completion.prompt_count is not None
+    assert completion.prompt_count > 0
+    assert completion.completion_count is not None
+    assert completion.completion_count > 0
+    try:
+        assert completion.model == "babbage-002"
+        assert completion.cost > 0
+    except AssertionError:
+        # Account for https://github.com/BerriAI/litellm/issues/10572
+        assert any(
+            "Failed to calculate cost".lower() in r.message.lower()
+            for r in caplog.records
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("llm", "summary_llm", "embedding"),
+    [
+        pytest.param(
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-sonnet-4-6",
+            "text-embedding-3-small",
+            id="anthropic",
+        ),
+        pytest.param(
+            "gemini/gemini-2.5-flash",
+            "gemini/gemini-2.5-flash",
+            "gemini/gemini-embedding-001",
+            id="gemini",
+        ),
+        pytest.param(
+            "gpt-5-mini-2025-08-07",
+            "gpt-5-mini-2025-08-07",
+            "text-embedding-3-small",
+            id="openai",
+        ),
+    ],
+)
+async def test_model_chain(
+    stub_data_dir: Path, llm: str, summary_llm: str, embedding: str
+) -> None:
+    settings = Settings(llm=llm, summary_llm=summary_llm, embedding=embedding)
+    # Use sequential evidence calls so later caching assertions are reliable
+    settings.answer.max_concurrent_requests = 1
+    # Anthropic's Claude Sonnet prompt caching requires a minimum prefix of 2,048 tokens,
+    # so extend our prompt to surpass this threshold
+    settings.prompts.summary_json_system += (
+        "\n\n## Examples\n\n"
+        "Below are examples of how to produce your JSON response given an excerpt and"
+        " question. Note that the summary should capture specific details like numbers,"
+        " equations, or direct quotes, and the relevance_score should reflect how useful"
+        " the excerpt is for answering the question.\n\n"
+        "Example 1 (highly relevant excerpt):\n"
+        'Excerpt: "The Phase III randomized controlled trial (NCT04012345) enrolled'
+        " 500 patients across 30 clinical sites in North America and Europe between"
+        " January 2019 and December 2021. The primary endpoint was progression-free"
+        " survival (PFS) at 24 months, which showed a statistically significant"
+        " improvement in the treatment arm (HR 0.58, 95% CI 0.42-0.79, p<0.001)."
+        " Secondary endpoints included overall survival (OS), objective response rate"
+        " (ORR), and duration of response (DOR). The treatment was generally well"
+        " tolerated, with the most common adverse events being fatigue (32%),"
+        " nausea (28%), and neutropenia (18%). Grade 3-4 adverse events occurred"
+        " in 15% of patients in the treatment arm compared to 12% in the placebo arm."
+        " Subgroup analyses revealed consistent benefits across age groups, geographic"
+        " regions, and baseline disease characteristics, supporting the robustness"
+        " of the primary findings. The Data Safety Monitoring Board recommended"
+        " early termination of the trial based on the overwhelming efficacy observed"
+        ' at the planned interim analysis."\n'
+        'Question: "What were the primary endpoints of the clinical trial?"\n'
+        'Response: {{"summary": "The Phase III trial (NCT04012345) enrolled 500 patients'
+        " across 30 sites. The primary endpoint was progression-free survival (PFS) at"
+        " 24 months, showing significant improvement (HR 0.58, 95% CI 0.42-0.79,"
+        " p<0.001). Secondary endpoints included overall survival, objective response"
+        " rate, and duration of response. The DSMB recommended early termination due"
+        ' to overwhelming efficacy.", "relevance_score": 9}}\n\n'
+        "Example 2 (irrelevant excerpt):\n"
+        'Excerpt: "Photosynthesis is a biological process by which green plants and'
+        " certain other organisms convert light energy, usually from the sun, into"
+        " chemical energy in the form of glucose. This process involves the absorption"
+        " of carbon dioxide (CO2) from the atmosphere and water (H2O) from the soil,"
+        " releasing oxygen (O2) as a byproduct. The light-dependent reactions occur"
+        " in the thylakoid membranes of the chloroplasts, where chlorophyll absorbs"
+        " photons and uses their energy to split water molecules, generating ATP and"
+        " NADPH. These energy carriers then power the Calvin cycle in the stroma,"
+        " where CO2 is fixed into three-carbon sugars that are later assembled into"
+        " glucose and other organic molecules essential for plant growth and"
+        " development. The overall equation for photosynthesis can be summarized as"
+        " 6CO2 + 6H2O + light energy -> C6H12O6 + 6O2, representing one of the"
+        ' most important biochemical reactions on Earth."\n'
+        'Question: "How does quantum computing work?"\n'
+        'Response: {{"summary": "", "relevance_score": 0}}\n\n'
+        "Example 3 (partially relevant excerpt):\n"
+        'Excerpt: "The 2023 Global Climate Report indicated that the average global'
+        " temperature was 1.45 degrees Celsius above pre-industrial levels, making"
+        " it the warmest year on record. Sea levels rose by 3.4 mm per year over"
+        " the past decade, while Arctic sea ice extent continued to decline at a"
+        " rate of 13% per decade. The report also highlighted that atmospheric CO2"
+        " concentrations reached 421 ppm, the highest in at least 800,000 years."
+        " Notably, renewable energy sources accounted for 30% of global electricity"
+        " generation, with solar and wind power seeing the largest increases."
+        " Investment in clean energy technologies surpassed $1.7 trillion globally,"
+        " reflecting growing momentum in the transition away from fossil fuels."
+        " However, the report cautioned that current trajectories remain insufficient"
+        " to meet the Paris Agreement targets without substantially accelerated action"
+        ' across all sectors of the economy."\n'
+        'Question: "What is the current state of renewable energy adoption?"\n'
+        'Response: {{"summary": "Renewable energy sources accounted for 30% of'
+        " global electricity generation in 2023, with solar and wind power seeing"
+        " the largest increases. Investment in clean energy technologies surpassed"
+        " $1.7 trillion globally. However, current trajectories remain insufficient"
+        ' to meet Paris Agreement targets without accelerated action.",'
+        ' "relevance_score": 4}}\n\n'
+        "Example 4 (technical excerpt with equations):\n"
+        'Excerpt: "The transformer architecture introduced by Vaswani et al. (2017)'
+        " computes attention using the scaled dot-product mechanism defined as"
+        " Attention(Q,K,V) = softmax(QK^T / sqrt(d_k))V, where Q, K, and V represent"
+        " the query, key, and value matrices respectively, and d_k is the dimension"
+        " of the key vectors. Multi-head attention extends this by projecting Q, K,"
+        " and V into h different subspaces, computing attention in parallel, and"
+        " concatenating the results. The model uses positional encodings based on"
+        " sinusoidal functions: PE(pos,2i) = sin(pos/10000^(2i/d_model)) and"
+        " PE(pos,2i+1) = cos(pos/10000^(2i/d_model)). The original transformer"
+        " achieved a BLEU score of 28.4 on the WMT 2014 English-to-German translation"
+        " task, surpassing all previously published models by more than 2 BLEU points."
+        " Training was conducted on 8 NVIDIA P100 GPUs for 3.5 days, using the Adam"
+        ' optimizer with beta_1=0.9, beta_2=0.98, and epsilon=10^-9."\n'
+        'Question: "How is attention computed in transformer models?"\n'
+        'Response: {{"summary": "The transformer uses scaled dot-product attention:'
+        " Attention(Q,K,V) = softmax(QK^T / sqrt(d_k))V, where Q, K, V are query,"
+        " key, value matrices and d_k is the key dimension. Multi-head attention"
+        " projects into h subspaces and computes attention in parallel. Positional"
+        " encodings use sinusoidal functions. The original model achieved 28.4 BLEU"
+        ' on WMT 2014 English-to-German.", "relevance_score": 10}}\n\n'
+        "Example 5 (tangentially relevant excerpt):\n"
+        "Excerpt: \"The history of computing can be traced back to Charles Babbage's"
+        " Analytical Engine in 1837, which contained many features of modern computers"
+        " including an arithmetic logic unit, control flow through conditional branching"
+        " and loops, and integrated memory. Ada Lovelace wrote the first algorithm"
+        " intended for implementation on the Analytical Engine in 1843, making her"
+        " widely regarded as the first computer programmer. The development of"
+        " electronic computers in the 1940s, starting with machines like ENIAC and"
+        " Colossus, marked the beginning of the digital age. ENIAC could perform"
+        " 5,000 additions per second and occupied 1,800 square feet of floor space."
+        " The invention of the transistor in 1947 at Bell Labs by Bardeen, Brattain,"
+        " and Shockley revolutionized electronics, leading to smaller, faster, and"
+        " more reliable computing devices. Moore's observation in 1965 that the"
+        " number of transistors on integrated circuits doubled roughly every two"
+        " years guided the industry's roadmap for decades.\"\n"
+        'Question: "What are the key advances in quantum computing hardware?"\n'
+        'Response: {{"summary": "The excerpt discusses classical computing history'
+        " from Babbage's Analytical Engine (1837) through transistors (1947) and"
+        " Moore's Law (1965), but does not address quantum computing hardware.\","
+        ' "relevance_score": 1}}\n\n'
+        "Example 6 (relevant excerpt with mixed data):\n"
+        'Excerpt: "The longitudinal cohort study followed 12,500 participants aged'
+        " 45-75 over a median period of 8.3 years. Multivariate Cox regression"
+        " analysis identified several independent risk factors for cardiovascular"
+        " events: hypertension (HR 1.82, 95% CI 1.54-2.15), type 2 diabetes"
+        " (HR 1.67, 95% CI 1.38-2.02), current smoking (HR 2.14, 95% CI"
+        " 1.76-2.60), and LDL cholesterol above 160 mg/dL (HR 1.45, 95% CI"
+        " 1.19-1.77). Participants who engaged in at least 150 minutes of moderate"
+        " aerobic exercise per week had a significantly lower risk (HR 0.62, 95%"
+        " CI 0.51-0.75, p<0.001). The population-attributable fraction for"
+        " modifiable risk factors was estimated at 63.7%, suggesting that nearly"
+        " two-thirds of cardiovascular events could theoretically be prevented"
+        " through lifestyle modifications and appropriate medical management."
+        " Sensitivity analyses using competing risk models and multiple imputation"
+        ' for missing data yielded consistent results across all subgroups."\n'
+        'Question: "What are the modifiable risk factors for cardiovascular disease?"\n'
+        'Response: {{"summary": "A cohort study of 12,500 participants (median 8.3'
+        " years follow-up) identified modifiable risk factors: hypertension (HR 1.82),"
+        " type 2 diabetes (HR 1.67), smoking (HR 2.14), and high LDL cholesterol"
+        " (HR 1.45). Exercise of 150+ min/week was protective (HR 0.62, p<0.001)."
+        " The population-attributable fraction was 63.7%, indicating nearly two-thirds"
+        ' of events are theoretically preventable.", "relevance_score": 9}}\n\n'
+        "Now apply the same approach to the actual excerpt and question provided below."
+        " Remember to include specific numbers, statistics, and direct quotes when"
+        " available, and set relevance_score to 0 if the excerpt is not relevant.\n"
+    )
+    outputs: list[str] = []
+
+    def accum(x) -> None:
+        outputs.append(x)
+
+    llm_model = settings.get_llm()
+    messages = [
+        Message(content="The duck says"),
+    ]
+    completion = await llm_model.call_single(
+        messages=messages,
+        callbacks=[accum],
+    )
+    assert completion.seconds_to_first_token > 0
+    assert completion.prompt_count is not None
+    assert completion.prompt_count > 0
+    assert completion.completion_count is not None
+    assert completion.completion_count > 0
+    assert str(completion) == "".join(outputs)
+    assert isinstance(completion.text, str)
+    assert completion.cost > 0
+
+    completion = await llm_model.call_single(
+        messages=messages,
+    )
+    assert completion.seconds_to_first_token == 0
+    assert completion.seconds_to_last_token > 0
+    assert isinstance(completion.text, str)
+    assert completion.cost > 0
+
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "flag_day.html",
+        "National Flag of Canada Day",
+        settings=settings,
+    )
+    assert len(docs.texts) >= 2, "Test needs at least two chunks for caching assertions"
+
+    captured_results: list[LLMResult] = []
+    orig_call_single = LLMModel.call_single
+
+    async def spy_call_single(self, *args, **kwargs):
+        result = await orig_call_single(self, *args, **kwargs)
+        captured_results.append(result)
+        await asyncio.sleep(3)  # Encourage cache warm up between calls
+        return result
+
+    with patch.object(LLMModel, "call_single", spy_call_single):
+        session = await docs.aget_evidence(
+            "What is the national flag of Canada?", settings=settings
+        )
+
+    assert session.cost > 0
+    assert captured_results, "Test requires LLM calls to check caching"
+
+    if llm_model.provider == litellm.LlmProviders.ANTHROPIC:
+        # Anthropic: on a cold cache, the first call writes a cache entry
+        # Gemini: uses implicit caching with no creation event -- the raw response
+        # omits cachedContentTokenCount entirely
+        # OpenAI's API has no cache creation field, only cache reads,
+        # SEE: https://platform.openai.com/docs/guides/prompt-caching
+        assert (captured_results[0].cache_creation_tokens or 0) > 0 or (
+            captured_results[0].cache_read_tokens or 0
+        ) > 0, "Expected first Anthropic call to interact with prompt cache"
+
+    # On a warm cache (re-running within the TTL), subsequent calls should
+    # read from the cache.
+    try:
+        assert any(
+            (r.cache_read_tokens or 0) > 0 for r in captured_results[1:]
+        ), "Expected subsequent calls to reuse prompt cache"
+    except AssertionError:
+        if llm_model.provider != litellm.LlmProviders.GEMINI:
+            raise
+        # Even with a 3-sec delay for caching to take place, Google Gemini
+        # does not reliably report cache reads. So to avoid flaky CI,
+        # this assertion is only enforced for non-Gemini providers
+
+
+@pytest.mark.vcr(
+    match_on=[*VCR_DEFAULT_MATCH_ON, "body"]  # body is needed for /embeddings
+)
+@pytest.mark.asyncio
+async def test_docs_lifecycle(subtests: SubTests, stub_data_dir: Path) -> None:
+    docs = Docs()
+    assert await docs.aadd(
+        stub_data_dir / "flag_day.html",
+        citation='"National Flag of Canada Day." WikiMedia Foundation, 2023, Accessed now',  # Skip citation inference
+        title="National Flag of Canada Day",  # Skip title inference
+        dockey="test",
+    )
+    grav_hill_docname = await docs.aadd(
+        stub_data_dir / "gravity_hill.md",
+        citation='"Gravity Hill." WikiMedia Foundation, 2023, Accessed now',  # Skip citation inference
+        title="Gravity hill",  # Skip title inference
+    )
+    assert grav_hill_docname, "Test expects successful add"
+
+    with subtests.test(msg="citation-creation"):
+        assert docs.docs["test"].docname == "National2023"
+
+    with subtests.test(msg="text-contains"):
+        await docs.aget_evidence("What is the national flag of Canada?")
+        assert docs.texts_index.texts_hashes
+        assert docs.texts
+        assert all(t in docs.texts_index for t in docs.texts)
+
+    with subtests.test(msg="delete"):
+        (grav_hill_details,) = (
+            d for d in docs.docs.values() if d.docname == grav_hill_docname
+        )
+        prior_texts_index_size = len(docs.texts_index)
+        docs.delete(docname=grav_hill_docname)
+        assert grav_hill_details.dockey not in docs.docs, "Details should be gone"
+        assert not [
+            t for t in docs.texts if t.doc == grav_hill_details
+        ], "Texts should be gone"
+        if len(docs.texts_index) == prior_texts_index_size:
+            pytest.xfail(
+                "Per https://github.com/Future-House/paper-qa/issues/1140"
+                " this can be improved"
+            )
+
+    with subtests.test(msg="cleanup"):
+        docs.texts_index.clear()
+        assert docs.texts
+        assert all(t not in docs.texts_index for t in docs.texts)
+
+
+@pytest.mark.asyncio
+async def test_evidence(stub_data_dir: Path) -> None:
+    debug_settings = Settings.from_name("debug")
+    debug_settings.parsing.multimodal = False
+
+    docs = Docs()
+    assert await docs.aadd(
+        stub_data_dir / "paper.pdf",
+        citation="Wellawatte et al, XAI Review, 2023",  # Skip citation inference
+        doi="10.1021/acs.jctc.2c01235",  # Skip DOI inference
+        title="A Perspective on Explanations of Molecular Prediction Models",  # Skip title inference
+        settings=debug_settings,
+    )
+    assert docs.texts, "Test expects texts to be added"
+    assert all(
+        not t.media for t in docs.texts
+    ), "Expected no media to be parsed with multimodal disabled"
+
+    evidence = (
+        await docs.aget_evidence(
+            PQASession(question="What does XAI stand for?"),
+            settings=debug_settings,
+        )
+    ).contexts
+    assert len(evidence) >= debug_settings.answer.evidence_k
+    assert len({e.context for e in evidence}) == len(
+        evidence
+    ), "Expected unique contexts"
+    texts = {c.text for c in evidence}
+    assert texts, "Below assertions require at least one text to be used"
+    orig_acompletion = litellm.acompletion
+    has_made_scoreless_context = False
+    no_score_context_body = "MAKEUNIQUE Explainable Artificial Intelligence (XAI)"
+
+    async def acompletion_that_breaks_first_context(*args, **kwargs):
+        completion = await orig_acompletion(*args, **kwargs)
+        nonlocal has_made_scoreless_context
+        if not has_made_scoreless_context:
+            assert len(completion.choices) == 1, "Test expects one choice"
+            completion.choices[0].message.content = no_score_context_body
+            has_made_scoreless_context = True
+        return completion
+
+    # Let's check we are resilient to bad context creation
+    with patch.object(litellm, "acompletion", acompletion_that_breaks_first_context):
+        # Let's also check we can get other evidence using the same underlying sources
+        other_evidence = (
+            await docs.aget_evidence(
+                PQASession(question="What is an acronym for explainable AI?"),
+                settings=debug_settings,
+            )
+        ).contexts
+    assert all(
+        c.context != no_score_context_body for c in other_evidence
+    ), "Expected context without score to be replaced via retrying"
+    assert texts.intersection(
+        {c.text for c in other_evidence}
+    ), "We should be able to reuse sources across evidence calls"
+
+
+@pytest.mark.vcr
+@pytest.mark.asyncio
+async def test_nonduplicate_contexts() -> None:
+    doc1 = Doc(docname="stub1", dockey="stub1", citation="Stub 1")
+    text1 = Text(name="stub1", text="I like turtles", doc=doc1)
+    text2 = Text(**text1.model_dump())
+    question = "What do you like?"
+
+    # Prior session with a context we want to dedupe against
+    session = PQASession(
+        question=question,
+        contexts=[
+            Context(
+                question=question,
+                context=(
+                    "The excerpt states 'I like turtles,'"
+                    " indicating a preference for turtles."
+                ),
+                text=text1,
+                score=10,
+            )
+        ],
+    )
+
+    # This pattern of pre-populating Docs, whereas it's not the
+    # intended flow, it's technically possible
+    docs = Docs(texts=[text2])
+    assert await docs.aadd_texts(texts=[text1], doc=doc1)
+    session = await docs.aget_evidence(session)
+    assert len(session.contexts) == 1, "Expected just one context"
+
+
+@pytest.mark.asyncio
+async def test_json_evidence(docs_fixture: Docs) -> None:
+    settings = Settings.from_name("fast")
+    settings.prompts.use_json = True
+    settings.prompts.summary_json_system = (
+        "Provide a summary of the relevant information"
+        " that could help answer the question based on the excerpt."
+        " Your summary, combined with many others,"
+        " will be given to the model to generate an answer."
+        " Respond with the following JSON format:"
+        '\n\n{{\n  "summary": "...",\n  "author_name": "...",\n  "relevance_score": 0-10,\n}}'
+        "\n\nwhere `summary` is relevant information from the text - about 100 words."
+        " `author_name` specifies the author."
+        " `relevance_score` is an integer 0-10 for the relevance of `summary` to the question."
+        "\n\nThe excerpt may or may not contain relevant information."
+        " If not, leave `summary` empty, and make `relevance_score` be 0."
+    )
+    orig_acompletion = litellm.acompletion
+    has_made_bad_json_context = False
+    bad_json_context = (  # Broken summary and relevance_score
+        '{\n  "summary": "Complete of th'
+        '\n  "author_name": "Sentinel value.",'
+        '\n  "relevance_score": "A"\n}'
+    )
+
+    async def acompletion_that_breaks_first_context(*args, **kwargs):
+        completion = await orig_acompletion(*args, **kwargs)
+        nonlocal has_made_bad_json_context
+        if not has_made_bad_json_context:
+            assert len(completion.choices) == 1, "Test expects one choice"
+            completion.choices[0].message.content = bad_json_context
+            has_made_bad_json_context = True
+        return completion
+
+    # Let's check we are resilient to bad context creation
+    with patch.object(litellm, "acompletion", acompletion_that_breaks_first_context):
+        evidence = (
+            await docs_fixture.aget_evidence(
+                PQASession(question="Who wrote this article?"),
+                settings=settings,
+            )
+        ).contexts
+    evidence_with_authors = [
+        c for c in evidence if hasattr(c, "author_name") and c.author_name
+    ]
+    assert evidence_with_authors
+    assert all(
+        "sentinel" not in c.author_name.lower() for c in evidence_with_authors
+    ), "Expected broken context retrying to work"
+
+
+@pytest.mark.asyncio
+async def test_ablations(docs_fixture: Docs) -> None:
+    settings = Settings()
+    settings.answer.evidence_skip_summary = True
+    settings.answer.evidence_retrieval = False
+    contexts = (
+        await docs_fixture.aget_evidence(
+            "Which page is the statement 'Deep learning (DL) is advancing the boundaries of"
+            " computational chemistry because it can accurately model non-linear"
+            " structure-function relationships.' on?",
+            settings=settings,
+        )
+    ).contexts
+    assert (
+        contexts[0].text.text.strip() == contexts[0].context
+    ), "summarization not ablated"
+
+    assert len(contexts) == len(docs_fixture.texts), "evidence retrieval not ablated"
+
+
+@pytest.mark.asyncio
+async def test_location_awareness(stub_data_dir: Path) -> None:
+    settings = Settings(
+        answer=AnswerSettings(evidence_k=3),
+        prompts=PromptSettings(
+            use_json=False,
+            system=(
+                "Answer either N/A, a page number, or a page range."
+                " For example N/A, Page 10, or Pages 10-12."
+                " Bibliography text is always N/A."
+                " If there are titles like 1Introduction in the paper excerpt,"
+                " there's likely a PDF page concatenation here such that"
+                " Introduction is actually on page 2, not page 1."
+                " For this reason, prefer pulling page or page ranges"
+                " from the citation over paper excerpt."
+                " The citation usually starts with name2023title pages X-Y,"
+                " so respond with Pages X-Y."
+            ),
+            summary=(
+                "## Paper Citation\n\n{citation}\n\n## Paper Excerpt\n\n{text}"
+                "\n\n## Question\n\n{question}"
+            ),
+        ),
+        parsing=ParsingSettings(
+            # Only read in first eight pages to save CI costs/runtime
+            reader_config={"chunk_chars": 5000, "overlap": 250, "page_range": (1, 8)},
+        ),
+    )
+
+    docs = Docs()
+    assert await docs.aadd(
+        stub_data_dir / "paper.pdf",
+        citation="Wellawatte et al, XAI Review, 2023",  # Skip citation inference
+        doi="10.1021/acs.jctc.2c01235",  # Skip DOI inference
+        title="A Perspective on Explanations of Molecular Prediction Models",  # Skip title inference
+        settings=settings,
+    )
+
+    session = await docs.aget_evidence(
+        "Which page or page range has the full statement (insensitive to newlines)"
+        " 'Deep learning (DL) is advancing the boundaries of computational chemistry"
+        " because it can accurately model non-linear structure-function relationships."
+        " Applications of DL can be found in a broad spectrum spanning"
+        " from quantum computing to drug discovery to materials design.' on?"
+        " If this statement is not present, just answer N/A.",
+        settings=settings,
+    )
+
+    def to_pages(value: Context) -> str:
+        cxt_val = value.context.lower().split("\n")[0]
+        page_range = cxt_val.split("page's")[-1].split("pages")[-1].split("page")[-1]
+        return page_range.strip().removesuffix(".")  # noqa: FURB184
+
+    # NOTE: scores are useless here because we didn't describe them in the prompt
+    locations = [to_pages(c) for c in session.contexts]
+    try:
+        # 2-3 is not strictly correct, but it's feasible enough that we allow it here
+        assert any(
+            x in locations for x in ("2", "1-3", "1 - 3", "2-3", "2 - 3")
+        ), f"correct location not found in parsed evidence {locations}"
+    except AssertionError:
+        if "1" not in locations:
+            # Fall 2025 LLMs are not smart enough yet :/ so just allow saying page 1
+            raise
+
+
+@pytest.mark.asyncio
+async def test_query(docs_fixture) -> None:
+    settings = Settings(prompts={"answer_iteration_prompt": None})
+    await docs_fixture.aquery("Is XAI usable in chemistry?", settings=settings)
+
+
+@pytest.mark.asyncio
+async def test_custom_context_str_fn(docs_fixture) -> None:
+    async def custom_context_str_fn(  # noqa: RUF029
+        settings: Settings,  # noqa: ARG001
+        contexts: list[Context],  # noqa: ARG001
+        question: str,  # noqa: ARG001
+        pre_str: str | None = None,  # noqa: ARG001
+    ) -> str:
+        return "TEST OVERRIDE"
+
+    assert isinstance(custom_context_str_fn, AsyncContextSerializer)
+
+    settings = Settings(
+        custom_context_serializer=custom_context_str_fn,
+        prompts={"answer_iteration_prompt": None},
+    )
+
+    session = await docs_fixture.aquery(
+        "Is XAI usable in chemistry?", settings=settings
+    )
+    assert (
+        session.context == "TEST OVERRIDE"
+    ), "Expected custom context string to be returned."
+
+
+@pytest.mark.asyncio
+async def test_aquery_groups_contexts_by_question(docs_fixture) -> None:
+    session = PQASession(question="What is the relationship between chemistry and AI?")
+
+    doc = Doc(docname="test_doc", citation="Test Doc, 2025", dockey="key1")
+    text1 = Text(text="XAI is useful for molecules.", name="t1", doc=doc)
+    text2 = Text(text="Drug discovery uses AI.", name="t2", doc=doc)
+    text3 = Text(text="Organic chemistry is a field.", name="t3", doc=doc)
+
+    session.contexts = [
+        Context(
+            text=text1,
+            context="Explanation about XAI and molecules (Smith 1999).",
+            score=6,
+            question="Is XAI usable in chemistry?",
+        ),
+        Context(
+            text=text2,
+            context="Details on how drug discovery leverages AI.",
+            score=5,
+            question="Is XAI usable in chemistry?",
+        ),
+        Context(
+            text=text3,
+            context="General facts about organic chemistry.",
+            score=5,
+            question="What is organic chemistry?",
+        ),
+    ]
+
+    settings = Settings(
+        prompts={"answer_iteration_prompt": None},
+        answer={
+            "group_contexts_by_question": True,
+            "skip_evidence_citation_strip": True,
+        },
+    )
+
+    result = await docs_fixture.aquery(session, settings=settings)
+
+    final_context_str = result.context
+
+    assert (
+        'Contexts related to the question: "Is XAI usable in chemistry?"'
+        in final_context_str
+    )
+
+    assert (
+        'Contexts related to the question: "What is organic chemistry?"'
+        in final_context_str
+    )
+
+    assert "Explanation about XAI and molecules (Smith 1999)." in final_context_str
+    assert "Details on how drug discovery leverages AI." in final_context_str
+    assert "General facts about organic chemistry." in final_context_str
+
+    assert "\n\n---\n\n" in final_context_str
+    q1_header_pos = final_context_str.find(
+        'Contexts related to the question: "Is XAI usable in chemistry?"'
+    )
+    q2_header_pos = final_context_str.find(
+        'Contexts related to the question: "What is organic chemistry?"'
+    )
+    context1_pos = final_context_str.find(
+        "Explanation about XAI and molecules (Smith 1999)."
+    )
+    context3_pos = final_context_str.find("General facts about organic chemistry.")
+
+    assert (
+        0 == q1_header_pos < context1_pos
+    ), "Expected q1 header to be first, and the context to follow."
+    assert q1_header_pos < q2_header_pos
+    assert q2_header_pos < context3_pos
+
+
+@pytest.mark.asyncio
+async def test_query_with_iteration(docs_fixture) -> None:
+    # we store these results to check that the prompts are OK
+    my_results: list[LLMResult] = []
+    # explicitly set the prompt to use QA iterations
+    settings = Settings()
+    llm = settings.get_llm()
+    llm.llm_result_callback = my_results.append
+    prior_answer = "No, it isn't usable in chemistry."
+    question = "Is XAI usable in chemistry?"
+    prior_session = PQASession(question=question, answer=prior_answer)
+    await docs_fixture.aquery(prior_session, llm_model=llm, settings=settings)
+    assert prior_answer in cast(
+        "str",
+        my_results[-1].prompt[1].content,  # type: ignore[union-attr, index]
+    ), "prior answer not in prompt"
+    # run without a prior session to check that the flow works correctly
+    await docs_fixture.aquery(question, llm_model=llm, settings=settings)
+    assert settings.prompts.answer_iteration_prompt[:10] not in cast(  # type: ignore[index]
+        "str",
+        my_results[-1].prompt[1].content,  # type: ignore[union-attr, index]
+    ), "prior answer prompt should not be inserted"
+
+
+@pytest.mark.asyncio
+async def test_llmresult_callback(docs_fixture: Docs) -> None:
+    my_results: list[LLMResult] = []
+
+    settings = Settings.from_name("fast")
+    summary_llm = settings.get_summary_llm()
+    summary_llm.llm_result_callback = my_results.append
+    await docs_fixture.aget_evidence(
+        "What is XAI?", settings=settings, summary_llm_model=summary_llm
+    )
+    assert my_results
+    assert my_results, "Expected the callback to append results"
+    assert my_results[0].name
+    assert my_results[0].session_id
+
+
+@pytest.mark.parametrize(
+    ("llm", "llm_settings"),
+    [
+        pytest.param(
+            "deepseek/deepseek-reasoner",
+            {
+                "model_list": [
+                    {
+                        "model_name": "deepseek/deepseek-reasoner",
+                        "litellm_params": {
+                            "model": "deepseek/deepseek-reasoner",
+                            "api_base": "https://api.deepseek.com/v1",
+                        },
+                    }
+                ]
+            },
+            id="deepseek-reasoner",
+        ),
+        pytest.param(
+            "openrouter/deepseek/deepseek-r1",
+            {},
+            id="openrouter-deepseek",
+        ),
+    ],
+)
+@pytest.mark.vcr(match_on=[*VCR_DEFAULT_MATCH_ON, "body"])
+@pytest.mark.asyncio
+async def test_get_reasoning(docs_fixture: Docs, llm: str, llm_settings: dict) -> None:
+    settings = Settings(
+        llm=llm,
+        llm_config=llm_settings,
+    )
+    response = await docs_fixture.aquery("What is XAI?", settings=settings)
+    assert response.answer_reasoning
+
+
+@pytest.mark.asyncio
+async def test_duplicate(stub_data_dir: Path, tmp_path) -> None:
+    """Check Docs doesn't store duplicates, while checking nonduplicate docs are stored."""
+    docs = Docs()
+
+    # First, check adding a straight-up duplicate doc
+    assert await docs.aadd(
+        stub_data_dir / "bates.txt",
+        citation="WikiMedia Foundation, 2023, Accessed now",
+        dockey="test1",
+    )
+    assert (
+        await docs.aadd(
+            stub_data_dir / "bates.txt",
+            citation="WikiMedia Foundation, 2023, Accessed now",
+            dockey="test1",
+        )
+        is None
+    ), "Expected duplicate add to indicate no new doc was added"
+    assert len(docs.docs) == 1, "Should have added only one document"
+
+    # Next, check adding a different doc works, and also check citation inference
+    common_doi = "10.1234/flag"
+    assert await docs.aadd(
+        stub_data_dir / "flag_day.html", dockey="flag_day", doi=common_doi
+    )
+    assert (
+        len(set(docs.docs.keys())) == 2
+    ), "Unique documents should be hashed as unique"
+    flag_day = docs.docs["flag_day"]
+    assert isinstance(flag_day, DocDetails)
+    assert flag_day.doi == common_doi
+    assert all(
+        x in flag_day.citation.lower() for x in ("wikipedia", "flag")
+    ), "Expected citation to be inferred"
+    assert flag_day.content_hash
+
+    # Now, check adding a different file but same metadata
+    # (emulating main text vs supplemental information)
+    # will be seen as a different doc
+    flag_day_content = await anyio.Path(stub_data_dir / "flag_day.html").read_bytes()
+    assert len(flag_day_content) >= 1000, "Expected long file to test truncation"
+    await anyio.Path(tmp_path / "flag_day.html").write_bytes(flag_day_content[:-100])
+    assert await docs.aadd(
+        tmp_path / "flag_day.html", dockey="flag_day_shorter", doi=common_doi
+    )
+    assert len(set(docs.docs.keys())) == 3, "Expected a third document to be added"
+    shorter_flag_day = docs.docs["flag_day_shorter"]
+    assert isinstance(shorter_flag_day, DocDetails)
+    assert shorter_flag_day.doi == common_doi
+    assert all(
+        x in shorter_flag_day.citation.lower() for x in ("wikipedia", "flag")
+    ), "Expected citation to be inferred"
+    assert shorter_flag_day.content_hash
+    assert flag_day.content_hash != shorter_flag_day.content_hash
+    assert flag_day.doc_id != shorter_flag_day.doc_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vector_store", [NumpyVectorStore, QdrantVectorStore])
+async def test_docs_with_custom_embedding(
+    subtests: SubTests, stub_data_dir: Path, vector_store: type[VectorStore]
+) -> None:
+    class MyEmbeds(EmbeddingModel):
+        name: str = "my_embed"
+
+        async def embed_documents(self, texts):
+            return [[0.0, 0.28, 0.95] for _ in texts]
+
+    docs = Docs(texts_index=vector_store())
+    await docs.aadd(
+        stub_data_dir / "bates.txt",
+        citation="WikiMedia Foundation, 2023, Accessed now",
+        embedding_model=MyEmbeds(),
+    )
+
+    with subtests.test(msg="confirm-embedding"):
+        assert docs.texts[0].embedding == [0.0, 0.28, 0.95]
+
+    with subtests.test(msg="copying-before-get-evidence"):
+        # Before getting evidence, shallow and deep copies are the same
+        docs_shallow_copy = Docs(
+            texts_index=type(docs.texts_index)(**docs.texts_index.model_dump()),
+            **docs.model_dump(exclude={"texts_index"}),
+        )
+        docs_deep_copy = deepcopy(docs)
+
+        assert (
+            docs.texts_index
+            == docs_shallow_copy.texts_index
+            == docs_deep_copy.texts_index
+        )
+
+    with subtests.test(msg="copying-after-get-evidence"):
+        # After getting evidence, a shallow copy of Docs is not the same because its
+        # texts index gets lazily populated, while a deep copy should preserve it
+        _ = await docs.aget_evidence(
+            "What country is Frederick Bates from?", embedding_model=MyEmbeds()
+        )
+        docs_shallow_copy = Docs(
+            texts_index=type(docs.texts_index)(**docs.texts_index.model_dump()),
+            **docs.model_dump(exclude={"texts_index"}),
+        )
+        docs_deep_copy = deepcopy(docs)
+
+        assert docs.texts_index != docs_shallow_copy.texts_index
+        assert docs.texts_index == docs_deep_copy.texts_index
+
+    with subtests.test(msg="clear-vector-store"):
+        # Test that the vector store has content before clearing
+        if isinstance(docs.texts_index, QdrantVectorStore):
+            # For QdrantVectorStore, we need to check if collection exists and has points
+            assert await docs.texts_index._collection_exists()
+            collection_info = await docs.texts_index.client.get_collection(
+                docs.texts_index.collection_name
+            )
+            assert collection_info.points_count > 0
+        assert len(docs.texts_index) > 0
+        assert docs.texts_index.texts_hashes
+
+        # Clear the vector store via Docs
+        docs.clear_docs()
+
+        # Verify the vector store is empty
+        if isinstance(docs.texts_index, QdrantVectorStore):
+            assert not await docs.texts_index._collection_exists()
+            assert docs.texts_index._point_ids is None
+        assert len(docs.texts_index) == 0
+        assert not docs.texts_index.texts_hashes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vector_store", [NumpyVectorStore, QdrantVectorStore])
+async def test_sparse_embedding(
+    stub_data_dir: Path, vector_store: type[VectorStore]
+) -> None:
+    docs = Docs(texts_index=vector_store())
+    await docs.aadd(
+        stub_data_dir / "bates.txt",
+        citation="WikiMedia Foundation, 2023, Accessed now",
+        embedding_model=SparseEmbeddingModel(),
+    )
+    assert isinstance(
+        docs.texts[0].embedding, list
+    ), "We require embeddings to be a list"
+    assert any(docs.texts[0].embedding), "We require embeddings to be populated"
+    assert all(
+        len(np.array(x.embedding).shape) == 1 for x in docs.texts
+    ), "Embeddings should be 1D"
+
+    # check the embeddings are the same size
+    assert docs.texts[0].embedding is not None
+    assert docs.texts[1].embedding is not None
+    assert np.shape(docs.texts[0].embedding) == np.shape(docs.texts[1].embedding)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vector_store", [NumpyVectorStore, QdrantVectorStore])
+async def test_hybrid_embedding(
+    stub_data_dir: Path, vector_store: type[VectorStore]
+) -> None:
+    emb_model = HybridEmbeddingModel(
+        models=[LiteLLMEmbeddingModel(), SparseEmbeddingModel()]
+    )
+    docs = Docs(texts_index=vector_store())
+    await docs.aadd(
+        stub_data_dir / "bates.txt",
+        citation="WikiMedia Foundation, 2023, Accessed now",
+        embedding_model=emb_model,
+    )
+    assert isinstance(
+        docs.texts[0].embedding, list
+    ), "We require embeddings to be a list"
+    assert any(docs.texts[0].embedding), "We require embeddings to be populated"
+
+    # check the embeddings are the same size
+    assert docs.texts[0].embedding is not None
+    assert docs.texts[1].embedding is not None
+    assert np.shape(docs.texts[0].embedding) == np.shape(docs.texts[1].embedding)
+
+    # now try via alias
+    emb_settings = Settings(
+        embedding="hybrid-text-embedding-3-small",
+    )
+    await docs.aadd(
+        stub_data_dir / "bates.txt",
+        citation="WikiMedia Foundation, 2023, Accessed now",
+        embedding_model=emb_settings.get_embedding_model(),
+    )
+    assert any(docs.texts[0].embedding)
+
+
+@pytest.mark.asyncio
+async def test_custom_llm_custom_media(stub_data_dir: Path) -> None:
+    captured_messages: list[list[Message]] = []
+
+    class StubLLMModel(LLMModel):
+        name: str = "custom/myllm"
+
+        async def acompletion(
+            self,
+            messages: list[Message],
+            **kwargs,  # noqa: ARG002
+        ) -> list[LLMResult]:
+            captured_messages.append(messages)
+            return [
+                LLMResult(
+                    model=self.name,
+                    text="Echo 2\nRelevance score: 8",
+                    prompt=messages,
+                    prompt_count=1,
+                    completion_count=1,
+                )
+            ]
+
+        @rate_limited
+        async def acompletion_iter(
+            self,
+            messages: list[Message],
+            **kwargs,  # noqa: ARG002
+        ) -> AsyncIterable[LLMResult]:
+            yield LLMResult(
+                model=self.name,
+                text="Echo 2\nRelevance score: 8",
+                prompt=messages,
+                prompt_count=1,
+                completion_count=1,
+            )
+
+        async def check_rate_limit(self, token_count: float, **kwargs) -> None:
+            """This is a dummy check."""
+
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "bates.txt",
+        citation="WikiMedia Foundation, 2023, Accessed now",
+        dockey="test",
+        llm_model=StubLLMModel(),
+    )
+    stub_doc = Doc(docname="stub-gcs", citation="Stub GCS Citation", dockey="stub-gcs")
+    signed_url = (
+        "https://storage.googleapis.com/test-bucket/img.png"
+        "?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Signature=abc"
+    )
+    await docs.aadd_texts(
+        texts=[
+            Text(
+                text="This chunk contains an image from GCS.",
+                name="gcs-chunk",
+                doc=stub_doc,
+                media=[ParsedMedia(index=0, url=signed_url)],
+            )
+        ],
+        doc=stub_doc,
+    )
+
+    settings = Settings(
+        prompts={"use_json": False},
+        answer={"evidence_retrieval": False, "evidence_skip_summary": False},
+    )
+    session = await docs.aget_evidence(
+        "Echo", summary_llm_model=StubLLMModel(), settings=settings
+    )
+    assert session.contexts, "Expected at least one context"
+    assert any(
+        "Echo" in c.context for c in session.contexts
+    ), "Expected text-based evidence containing 'Echo'"
+    signed_url_msgs = [
+        m
+        for msgs in captured_messages
+        for m in msgs
+        if m.content
+        and m.is_multimodal
+        and any(
+            entry.get("type") == "image_url" and entry["image_url"]["url"] == signed_url
+            for entry in json.loads(m.content)
+        )
+    ]
+    assert any(
+        "Summarize the excerpt below to help answer a question" in m.content
+        for m in signed_url_msgs
+        if m.content
+    ), "Expected the signed GCS URL to be used when gathering evidence"
+
+
+@pytest.mark.asyncio
+async def test_docs_pickle(stub_data_dir) -> None:
+    """Ensure that Docs object can be pickled and unpickled correctly."""
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "flag_day.html",
+        "WikiMedia Foundation, 2023, Accessed now",
+        dockey="test",
+    )
+
+    # Pickle the Docs object
+    docs_pickle = pickle.dumps(docs)
+    unpickled_docs = pickle.loads(docs_pickle)
+
+    assert unpickled_docs.docs["test"].docname == "Wiki2023"
+    assert len(unpickled_docs.docs) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("qa_prompt", "unsure_sentinel"),
+    [
+        pytest.param(default_qa_prompt, CANNOT_ANSWER_PHRASE, id="default-unsure"),
+        pytest.param(
+            default_qa_prompt.replace(CANNOT_ANSWER_PHRASE, "I am unsure"),
+            "I am unsure",
+            id="custom-unsure",
+        ),
+    ],
+)
+async def test_unrelated_context(
+    agent_test_settings: Settings,
+    stub_data_dir: Path,
+    qa_prompt: str,
+    unsure_sentinel: str,
+) -> None:
+    agent_test_settings.prompts.qa = qa_prompt
+    assert unsure_sentinel in qa_prompt, "Test relies on unsure sentinel in qa prompt"
+
+    docs = Docs()
+    assert await docs.aadd(
+        stub_data_dir / "bates.txt", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    assert docs.texts, "Test requires at least one text"
+    session = await docs.aget_evidence(
+        "What do scientist estimate as the planetary composition of Jupyter?",
+        settings=agent_test_settings,
+    )
+    session.contexts.append(  # Give a context so the rest of the test can run
+        Context(
+            context="George Washington is a founding father",
+            question="What do scientist estimate as the planetary composition of Jupyter?",
+            text=docs.texts[0],
+            score=1,
+        )
+    )
+    for c in session.contexts:
+        assert c.score <= 2, "Expected contexts to be considered irrelevant"
+    session = await docs.aquery(session, settings=agent_test_settings)
+    assert unsure_sentinel in session.answer
+
+
+@pytest.mark.asyncio
+async def test_repeat_keys(stub_data_dir) -> None:
+    docs = Docs()
+    result = await docs.aadd(
+        stub_data_dir / "bates.txt", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    assert result
+    result = await docs.aadd(
+        stub_data_dir / "bates.txt", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    assert not result
+    assert len(docs.docs) == 1
+
+    await docs.aadd(
+        stub_data_dir / "flag_day.html", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    assert len(docs.docs) == 2
+
+    # check keys
+    ds = list(docs.docs.values())
+    assert ds[0].docname == "Wiki2023"
+    assert ds[1].docname == "Wiki2023a"
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_w_no_match_doc_details(stub_data_dir: Path) -> None:
+    docs = Docs()
+    docname = await docs.aadd(
+        stub_data_dir / "paper.pdf",
+        "Wellawatte et al, XAI Review, 2023",
+    )
+    (doc_details,) = docs.docs.values()
+    assert doc_details.content_hash == "41f786fcc56d27ff0c1507153fae3774"
+    assert doc_details.docname == docname, "Added name should match between details"
+    # doc will be a DocDetails object, but nothing can be found
+    # thus, we retain the prior citation data
+    assert (
+        doc_details.citation
+        == doc_details.formatted_citation
+        == "Wellawatte et al, XAI Review, 2023"
+    ), "Formatted citation should be the same when no metadata is found."
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_w_no_chunks(stub_data_dir: Path) -> None:
+    settings = Settings.from_name("debug")
+    assert settings.parsing.defer_embedding, "Test relies on deferred embedding"
+    settings.parsing.reader_config["chunk_chars"] = 0  # Have one chunk = entire text
+    # don't want to shove whole document into llm to get citation or embedding
+    settings.parsing.use_doc_details = False
+    settings.summary_llm = "gpt-4o-mini"  # context window needs to fit our one chunk
+
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "paper.pdf",
+        "Wellawatte et al, XAI Review, 2023",
+        settings=settings,
+    )
+    assert len(docs.texts) == 1, "Should have been one chunk"
+    assert docs.texts[0].embedding is None, "Should have deferred the embedding"
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize("defer_embeddings", [True, False])
+@pytest.mark.asyncio
+async def test_partly_embedded_texts(defer_embeddings: bool) -> None:
+    settings = Settings.from_name("fast")
+    settings.parsing.defer_embedding = defer_embeddings
+    docs = Docs()
+    assert isinstance(
+        docs.texts_index, NumpyVectorStore
+    ), "We want this test to cover NumpyVectorStore"
+
+    stub_doc = Doc(docname="stub", citation="stub", dockey="stub")
+    pre_embedded_text = Text(text="I like turtles.", name="sentence1", doc=stub_doc)
+    pre_embedded_text.embedding = (
+        await settings.get_embedding_model().embed_documents([pre_embedded_text.text])
+    )[0]
+    # Some of these texts are partly embedded, some are not
+    texts_to_add = [
+        pre_embedded_text,
+        Text(text="I like cats.", name="sentence2", doc=stub_doc, metadata="stub"),
+    ]
+    assert texts_to_add[0] != texts_to_add[1], "Test assumes different texts"
+    assert hash(texts_to_add[0]) != hash(
+        texts_to_add[1]
+    ), "Test assumes different texts"
+
+    # 1. Add texts, noting some are partly embedded
+    await docs.aadd_texts(texts=texts_to_add, doc=stub_doc)
+    assert docs.texts == texts_to_add
+    assert not docs.texts_index.texts
+    assert not docs.texts_index.texts_hashes
+
+    # 2. Gather evidence should work
+    await docs.aget_evidence("What do I like?")
+    assert docs.texts_index.texts == docs.texts == texts_to_add
+    assert len(docs.texts_index.texts_hashes) == len(texts_to_add)
+
+    # 3. Gathering evidence again should not change shapes
+    await docs.aget_evidence("What was it that I liked?")
+    assert docs.texts_index.texts == docs.texts == texts_to_add
+    assert len(docs.texts_index.texts_hashes) == len(texts_to_add)
+
+
+# some of the stored requests will be identical on
+# method, scheme, host, port, path, and query (if defined)
+# body will always be different between requests
+# adding body so that vcr correctly match the right request with its response.
+@pytest.mark.vcr(match_on=[*VCR_DEFAULT_MATCH_ON, "body"])
+@pytest.mark.asyncio
+async def test_pdf_reader_match_doc_details(stub_data_dir: Path) -> None:
+    docs = Docs()
+    docname = await docs.aadd(
+        stub_data_dir / "paper.pdf",
+        "Wellawatte et al, A Perspective on Explanations of Molecular Prediction"
+        " Models, XAI Review, 2023",
+        use_doc_details=True,
+        clients={
+            CrossrefProvider,
+            JournalQualityPostProcessor,
+        },  # Limit to only crossref since s2 is too flaky
+        fields=["author", "journal", "citation_count"],
+    )
+    (doc_details,) = docs.docs.values()
+    assert doc_details.content_hash == "41f786fcc56d27ff0c1507153fae3774"
+    assert doc_details.docname == docname, "Added name should match between details"
+    # Crossref is non-deterministic in its ordering for results
+    # (it can give DOI '10.1021/acs.jctc.2c01235' or DOI '10.26434/chemrxiv-2022-qfv02')
+    # thus we need to capture both possible dockeys
+    assert doc_details.dockey in {"8ce7ddba9c9dcae6", "a353fa2478475c9c"}
+    assert isinstance(doc_details, DocDetails)
+    # note year is unknown because citation string is only parsed for authors/title/doi
+    # AND we do not request it back from the metadata sources
+    assert doc_details.docname == "wellawatteUnknownyearaperspectiveon"
+    assert doc_details.authors
+    assert set(doc_details.authors) == {
+        "Geemi P. Wellawatte",
+        "Heta A. Gandhi",
+        "Aditi Seshadri",
+        "Andrew D. White",
+    }
+    assert doc_details.doi in {
+        "10.1021/acs.jctc.2c01235",
+        "10.26434/chemrxiv-2022-qfv02",
+    }
+    match = re.search(
+        r"This article has (\d+) citations", doc_details.formatted_citation
+    )
+    assert match
+    num_citations = int(match.group(1))
+    assert num_citations >= 1, "Expected at least one citation"
+    assert (
+        "Journal of Chemical Theory and Computation" in doc_details.formatted_citation
+    ) or ("ChemRxiv" in doc_details.formatted_citation)
+
+    num_retries = 3
+    for _ in range(num_retries):
+        session = await docs.aquery("Are counterfactuals actionable? [yes/no]")
+        if any(w in session.answer for w in ("yes", "Yes")):
+            assert f"This article has {num_citations} citations" in session.context
+            assert any(
+                c.id in session.raw_answer for c in session.contexts
+            ), "No context ids found in answer"
+            assert all(
+                c.id not in session.formatted_answer for c in session.contexts
+            ), "Context ids should not be in formatted answer"
+            return
+    raise AssertionError(f"Query was incorrect across {num_retries} retries.")
+
+
+@pytest.mark.asyncio
+async def test_fileio_reader_pdf(stub_data_dir: Path) -> None:
+    docs = Docs()
+    with (stub_data_dir / "paper.pdf").open("rb") as f:
+        await docs.aadd_file(f, "Wellawatte et al, XAI Review, 2023")
+    num_retries = 3
+    for _ in range(num_retries):
+        session = await docs.aquery("Are counterfactuals actionable? [yes/no]")
+        if any(w in session.answer for w in ("yes", "Yes")):
+            return
+    raise AssertionError(f"Query was incorrect across {num_retries} retries.")
+
+
+@pytest.mark.asyncio
+async def test_fileio_reader_txt(stub_data_dir: Path) -> None:
+    # can't use curie, because it has trouble with parsed HTML
+    docs = Docs()
+    with (stub_data_dir / "bates.txt").open("rb") as file:
+        file_content = file.read()
+
+    await docs.aadd_file(
+        BytesIO(file_content),
+        "WikiMedia Foundation, 2023, Accessed now",
+    )
+    session = await docs.aquery("What country was Frederick Bates born in?")
+    assert "United States" in session.answer
+
+
+@pytest.mark.parametrize(
+    ("page_range", "page_count", "expected"),
+    [
+        pytest.param(None, 10, range(10), id="all-pages"),
+        pytest.param(3, 10, range(2, 3), id="single-page"),
+        pytest.param((2, 5), 10, range(1, 5), id="page-range-tuple"),
+        pytest.param(1, 10, range(1), id="first-page"),
+        pytest.param(15, 10, range(14, 10), id="single-page-exceeds-count"),
+        pytest.param(10, 10, range(9, 10), id="single-page-at-count"),
+        pytest.param((2, 15), 10, range(1, 10), id="tuple-end-exceeds-count"),
+        pytest.param((2, 10), 10, range(1, 10), id="tuple-end-at-count"),
+    ],
+)
+def test_resolve_page_range(
+    page_range: int | tuple[int, int] | None, page_count: int, expected: range
+) -> None:
+    assert resolve_page_range(page_range, page_count) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pdf_parser", [pypdf_parse_pdf_to_pages, pymupdf_parse_pdf_to_pages]
+)
+async def test_parser_only_reader(pdf_parser: PDFParserFn, stub_data_dir: Path) -> None:
+    doc_path = stub_data_dir / "paper.pdf"
+    parsed_text = await read_doc(
+        Path(doc_path),
+        Doc(docname="foo", citation="Foo et al, 2002", dockey="1"),
+        parsed_text_only=True,
+        parse_pdf=pdf_parser,
+        full_page=True,  # Simple to support across many parsers
+    )
+    assert parsed_text.metadata.name
+    assert "pdf" in parsed_text.metadata.name
+    assert parsed_text.metadata.chunk_metadata is None
+    assert isinstance(parsed_text.content, dict)
+    num_chars = 0
+    for value in parsed_text.content.values():
+        assert isinstance(value, tuple)
+        num_chars += len(value[0])
+    assert parsed_text.metadata.count_parsed_media > 1
+    assert parsed_text.metadata.count_parsed_media == len(
+        parsed_text.content
+    ), "Full parsing should have one screenshot per page"
+    assert parsed_text.metadata.total_parsed_text_length == num_chars
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pdf_parser",
+    [
+        pymupdf_parse_pdf_to_pages  # TODO: add PyPDF when it supports multiple images/page
+    ],
+)
+async def test_chunk_metadata_reader(
+    pdf_parser: PDFParserFn, stub_data_dir: Path
+) -> None:
+    chunk_text, metadata = await read_doc(
+        stub_data_dir / "paper.pdf",
+        Doc(docname="foo", citation="Foo et al, 2002", dockey="1"),
+        parsed_text_only=False,  # noqa: FURB120
+        include_metadata=True,
+        parse_pdf=pdf_parser,
+        chunk_chars=3000,
+        overlap=100,
+    )
+    assert metadata.name
+    assert "pdf" in metadata.name
+    assert isinstance(metadata.chunk_metadata, ChunkMetadata)
+    assert metadata.chunk_metadata.name
+    assert "overlap-document" in metadata.chunk_metadata.name
+    assert metadata.chunk_metadata.overlap == 100
+    assert metadata.chunk_metadata.size == 3000
+    assert len(chunk_text) > 2, "Expected multiple chunks, for meaningful assertions"
+    assert all(len(chunk.text) <= metadata.chunk_metadata.size for chunk in chunk_text)
+    assert metadata.total_parsed_text_length // metadata.chunk_metadata.size <= len(
+        chunk_text
+    )
+    assert all(
+        chunk_text[i].text[-100:] == chunk_text[i + 1].text[:100]
+        for i in range(len(chunk_text) - 1)
+    )
+    # Let's check the pages in the chunk names
+    first_page, _ = chunk_text[0].name.rsplit(" ", maxsplit=1)[-1].split("-")
+    assert first_page == "1", "First chunk should be for page 1"
+    stlast_page, last_page = chunk_text[-1].name.rsplit(" ", maxsplit=1)[-1].split("-")
+    assert (
+        int(last_page) - int(first_page) > 2
+    ), "Expected many pages, for meaningful assertions"
+    assert (
+        len(chunk_text[-1].text) < metadata.chunk_metadata.size
+    ), "Expected last chunk to be a partial chunk, for meaningful assertions"
+    assert (
+        int(last_page) - int(stlast_page) <= 2
+    ), "Incorrect page range if last chunk is a partial chunk"
+    assert metadata.count_parsed_media > 1, "Expected media to be parsed"
+    assert (
+        sum(len(t.media) for t in chunk_text) == metadata.count_parsed_media
+    ), "Expected chunks' media to match parsed media"
+
+    chunk_text, metadata = await read_doc(
+        stub_data_dir / "flag_day.html",
+        Doc(docname="foo", citation="Foo et al, 2002", dockey="1"),
+        parsed_text_only=False,  # noqa: FURB120
+        include_metadata=True,
+        chunk_chars=3000,
+        overlap=100,
+    )
+    # NOTE the use of tiktoken changes the actual char and overlap counts
+    assert metadata.name
+    assert "html" in metadata.name
+    assert isinstance(metadata.chunk_metadata, ChunkMetadata)
+    assert metadata.chunk_metadata.name
+    assert "overlap-text" in metadata.chunk_metadata.name
+    assert metadata.chunk_metadata.overlap == 100
+    assert metadata.chunk_metadata.size == 3000
+    assert all(
+        len(chunk.text) <= metadata.chunk_metadata.size * 1.25 for chunk in chunk_text
+    )
+    assert metadata.total_parsed_text_length // metadata.chunk_metadata.size <= len(
+        chunk_text
+    )
+
+    for code_input in (
+        Path(__file__),  # Python gets parsed into `list[str]` content
+        stub_data_dir / ".DS_Store",  # .DS_Store gets parsed into `str` content
+        stub_data_dir / "py.typed",  # Marker file gets parsed into empty `list` content
+    ):
+        chunk_text, metadata = await read_doc(
+            path=code_input,
+            doc=Doc(docname="foo", citation="Foo et al, 2002", dockey="1"),
+            include_metadata=True,
+            chunk_chars=3000,
+            overlap=100,
+        )
+        assert metadata.name
+        assert "txt" in metadata.name
+        assert isinstance(metadata.chunk_metadata, ChunkMetadata)
+        assert metadata.chunk_metadata.name
+        assert "overlap-code" in metadata.chunk_metadata.name
+        assert metadata.chunk_metadata.overlap == 100
+        assert metadata.chunk_metadata.size == 3000
+        assert all(
+            len(chunk.text) <= metadata.chunk_metadata.size * 1.25
+            for chunk in chunk_text
+        )
+        assert metadata.total_parsed_text_length // metadata.chunk_metadata.size <= len(
+            chunk_text
+        )
+
+
+def test_media_to_image_url(subtests: SubTests) -> None:
+    with subtests.test(msg="data-jpg"):
+        media = ParsedMedia(index=0, data=b"fake_jpg", info={"suffix": ".jpg"})
+        url = media.to_image_url()
+        assert "image/jpeg" in url
+
+    with subtests.test(msg="data-jpeg"):
+        media = ParsedMedia(index=0, data=b"fake_jpeg", info={"suffix": ".jpeg"})
+        url = media.to_image_url()
+        assert "image/jpeg" in url
+
+    with subtests.test(msg="data-png"):
+        media = ParsedMedia(index=0, data=b"fake_png", info={"suffix": ".png"})
+        url = media.to_image_url()
+        assert "image/png" in url
+
+    with subtests.test(msg="data-default"):
+        media = ParsedMedia(index=0, data=b"fake_png")
+        url = media.to_image_url()
+        assert "image/png" in url
+
+    with subtests.test(msg="url"):
+        media = ParsedMedia(index=0, url="https://storage.example.com/img.png")
+        assert media.to_image_url() == "https://storage.example.com/img.png"
+
+
+def test_parsed_media_data_or_url() -> None:
+    with pytest.raises(ValidationError, match="one of"):
+        ParsedMedia(index=0, data=b"")
+
+    with pytest.raises(ValidationError, match="one of"):
+        ParsedMedia(index=0)
+
+    with pytest.raises(ValidationError, match="not both"):
+        ParsedMedia(index=0, data=b"img", url="https://example.com/img.png")
+
+    media_with_data = ParsedMedia(index=0, data=b"image-bytes")
+    assert media_with_data.data == b"image-bytes"
+    assert not media_with_data.url
+
+    media_with_url = ParsedMedia(index=0, url="https://storage.example.com/img.png")
+    assert media_with_url.url == "https://storage.example.com/img.png"
+    assert not media_with_url.data
+    with pytest.raises(ValueError, match="Cannot generate an ID"):
+        media_with_url.to_id()
+    with pytest.raises(ValueError, match=r"(?:Cannot|no need to) save"):
+        media_with_url.save("image.png")
+
+    assert media_with_data != media_with_url
+    assert media_with_url != media_with_data
+
+
+def test_parsed_media_url_only_hash_eq() -> None:
+    m1 = ParsedMedia(index=0, url="https://storage.example.com/img.png")
+    m2 = ParsedMedia(index=0, url="https://storage.example.com/img.png")
+    assert m1 == m2
+    assert hash(m1) == hash(m2)
+
+    m3 = ParsedMedia(index=0, url="https://storage.example.com/other.png")
+    assert m1 != m3
+
+    # Mixed: one has data, the other only a URL — never equal
+    m_data = ParsedMedia(index=0, data=b"img")
+    m_url = ParsedMedia(index=0, url="https://storage.example.com/img.png")
+    assert m_data != m_url
+    assert m_url != m_data
+
+
+@pytest.mark.asyncio
+async def test_image_aggregation(stub_data_dir: Path) -> None:
+    png_path = stub_data_dir / "sf_districts.png"
+
+    # Test how self-comparisons work
+    ((_, (parsed_image,)),) = cast(dict, (await parse_image(png_path)).content).values()
+    assert parsed_image == parsed_image, "Expected equality"  # noqa: PLR0124
+    assert parsed_image.to_id() == parsed_image.to_id(), "Expected same ID"
+    assert len({parsed_image, parsed_image}) == 1, "Expected shared hash"
+    assert not parsed_image.text, "Expected no text for later assertions to make sense"
+    assert (
+        parsed_image.info.get("type") != "table"
+    ), "Expected no table for later assertions to make sense"
+
+    # Test how self-comparisons work
+    ((_, (parsed_image2,)),) = cast(
+        dict, (await parse_image(png_path)).content
+    ).values()
+    assert parsed_image == parsed_image2, "Expected equality to persist across reads"
+    assert (
+        parsed_image.to_id() == parsed_image2.to_id()
+    ), "Expected ID to persist across reads"
+    assert (
+        len({parsed_image, parsed_image2}) == 1
+    ), "Expected hash to persist across reads"
+
+    # Test different read details
+    ((_, (parsed_image3,)),) = cast(
+        dict, (await parse_image(png_path)).content
+    ).values()
+    parsed_image3.text = "Golden Gate"
+    parsed_image3.info["type"] = "table"
+    assert parsed_image != parsed_image3, "Expected tables to be differentiable"
+    assert (
+        parsed_image.to_id() != parsed_image3.to_id()
+    ), "Expected ID to mismatch between tables and images"
+    assert (
+        len({parsed_image, parsed_image3}) == 2
+    ), "Expected tables to be hashed differently"
+
+
+@pytest.mark.asyncio
+async def test_read_doc_images_metadata(stub_data_dir: Path) -> None:
+    png_path = stub_data_dir / "sf_districts.png"
+    doc = Doc(docname="stub", citation="stub", dockey="stub")
+
+    # Test parsing only
+    parsed_text = await read_doc(png_path, doc, parsed_text_only=True)
+    assert isinstance(parsed_text.content, dict)
+    assert "1" in parsed_text.content
+    page_content = parsed_text.content["1"]
+    assert isinstance(page_content, tuple)
+    text_content, (parsed_image,) = page_content
+    assert not text_content, "Expected no text content for an image"
+    assert isinstance(parsed_image, ParsedMedia)
+    assert parsed_image.index == 0
+    assert isinstance(parsed_image.data, bytes)
+    assert parsed_image.data
+    assert not parsed_image.text, "Expected no text content for a standalone image"
+    assert parsed_image.info["suffix"] == ".png"
+    image_id = parsed_image.to_id()
+    assert image_id.version == 4, "Expected a uuid4-compatible ID"
+    assert image_id == UUID("f6426bc3-382a-45a4-8677-08744044864f")
+    assert parsed_text.metadata.name
+    assert "image" in parsed_text.metadata.name
+    assert parsed_text.metadata.count_parsed_media == 1
+    assert parsed_text.metadata.total_parsed_text_length == 0
+    assert parsed_text.metadata.chunk_metadata is None
+
+    # Test parsing + 'chunking'
+    (text,) = await read_doc(png_path, doc)
+    assert isinstance(text, Text)
+    assert text.doc == doc
+    (image,) = text.media
+    assert image == parsed_image
+
+    # Test including metadata
+    texts_with_metadata = await read_doc(png_path, doc, include_metadata=True)
+    assert isinstance(texts_with_metadata, tuple)
+    texts, metadata = texts_with_metadata
+    assert len(texts) == 1
+    assert texts[0] == text
+    assert metadata.name
+    assert "image" in metadata.name
+    assert metadata.count_parsed_media == 1
+    assert metadata.total_parsed_text_length == 0
+    assert metadata.chunk_metadata is not None
+    assert not metadata.chunk_metadata.size
+    assert not metadata.chunk_metadata.overlap
+    assert metadata.chunk_metadata.name
+    assert "algorithm=none" in metadata.chunk_metadata.name
+
+
+@pytest.mark.asyncio
+async def test_read_doc_images_concurrency(stub_data_dir: Path) -> None:
+    png_path = stub_data_dir / "sf_districts.png"
+    doc = Doc(docname="stub", citation="stub", dockey="stub")
+    validation_mock = MagicMock()
+
+    async def validate(data: bytes) -> None:  # noqa: RUF029
+        validate_image(io.BytesIO(data))
+        validation_mock(data)
+
+    # Check we can concurrently read in the same image many times
+    concurrent_call_count = 10
+    seen_media = set()
+    bulk_texts = await asyncio.gather(
+        *(
+            read_doc(png_path, doc, validator=validate)
+            for _ in range(concurrent_call_count)
+        )
+    )
+    for (text,) in bulk_texts:
+        assert text.doc == doc
+        assert len(text.media) == 1
+        seen_media.add(text.media[0])
+    assert (
+        len(seen_media) == 1
+    ), "Expected the concurrent reads to all have the same parsed result"
+    validation_mock.assert_has_calls(
+        [call(next(iter(seen_media)).data)] * concurrent_call_count
+    )
+
+
+class TestMultimodalOptions:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (False, MultimodalOptions.OFF),
+            (True, MultimodalOptions.ON_WITH_ENRICHMENT),
+            (MultimodalOptions.OFF, MultimodalOptions.OFF),
+            (
+                MultimodalOptions.ON_WITH_ENRICHMENT,
+                MultimodalOptions.ON_WITH_ENRICHMENT,
+            ),
+            (
+                MultimodalOptions.ON_WITHOUT_ENRICHMENT,
+                MultimodalOptions.ON_WITHOUT_ENRICHMENT,
+            ),
+        ],
+    )
+    def test_from_value(
+        self, value: bool | MultimodalOptions, expected: MultimodalOptions
+    ) -> None:
+        assert MultimodalOptions.from_value(value) == expected
+
+    @pytest.mark.parametrize(
+        ("multimodal_option", "expected"),
+        [
+            (False, (False, False)),
+            (True, (True, True)),
+            (MultimodalOptions.OFF, (False, False)),
+            (MultimodalOptions.ON_WITH_ENRICHMENT, (True, True)),
+            (MultimodalOptions.ON_WITHOUT_ENRICHMENT, (True, False)),
+        ],
+    )
+    def test_should_parse_and_enrich_media(
+        self, multimodal_option: bool | MultimodalOptions, expected: tuple[bool, bool]
+    ) -> None:
+        assert (
+            ParsingSettings(multimodal=multimodal_option).should_parse_and_enrich_media
+            == expected
+        )
+
+
+def record_non_llm_requests(
+    request: "vcr.request.Request",
+) -> "vcr.request.Request | None":
+    """Filter to only record non-OpenAI non-Anthropic requests."""
+    return (
+        request
+        if all(x not in request.uri for x in ("api.openai.com", "api.anthropic.com"))
+        else None
+    )
+
+
+@pytest.mark.vcr(before_record_request=record_non_llm_requests)
+@pytest.mark.asyncio
+async def test_image_enrichment_normal_use(stub_data_dir: Path) -> None:
+    unenriched_settings = Settings(
+        answer=AnswerSettings(evidence_k=2),  # Only one context is actually necessary
+        parsing=ParsingSettings(multimodal=MultimodalOptions.ON_WITHOUT_ENRICHMENT),
+    )
+    unenriched_docs = Docs()
+    await unenriched_docs.aadd(
+        stub_data_dir / "paper.pdf",
+        citation="Wellawatte et al, XAI Review, 2023",  # Skip citation inference
+        doi="10.1021/acs.jctc.2c01235",  # Skip DOI inference
+        title="A Perspective on Explanations of Molecular Prediction Models",  # Skip title inference
+        settings=unenriched_settings,
+    )
+    unenriched_mm_texts = [text for text in unenriched_docs.texts if text.media]
+    assert all(
+        not m.info.get("enriched_description")
+        for t in unenriched_mm_texts
+        for m in t.media
+    ), "Test expects no enrichment for the comparison"
+
+    enriched_settings = Settings(
+        answer=AnswerSettings(evidence_k=2),  # Only one context is actually necessary
+        parsing=ParsingSettings(multimodal=MultimodalOptions.ON_WITH_ENRICHMENT),
+    )
+    enriched_docs = Docs()
+    assert await enriched_docs.aadd(
+        stub_data_dir / "paper.pdf",
+        citation="Wellawatte et al, XAI Review, 2023",  # Skip citation inference
+        doi="10.1021/acs.jctc.2c01235",  # Skip DOI inference
+        title="A Perspective on Explanations of Molecular Prediction Models",  # Skip title inference
+        settings=enriched_settings,
+    )
+    enriched_mm_texts = [t for t in enriched_docs.texts if t.media]
+    assert all(
+        m.info.get("enriched_description") for t in enriched_mm_texts for m in t.media
+    ), "Expected enrichment to have occurred"
+
+    # Before asking FigQA-style questions, confirm the inputs are equivalent
+    assert all(
+        t_unen.name == t_en.name
+        and len(t_unen.media) == len(t_en.media)
+        and all(
+            m_unen.to_id() == m_en.to_id()
+            for m_unen, m_en in zip(t_unen.media, t_en.media, strict=True)
+        )
+        for t_unen, t_en in zip(unenriched_mm_texts, enriched_mm_texts, strict=True)
+    ), "Test expects same texts and ordering from both adds"
+
+    # Ask a FigQA-style question, where the answer only exists
+    # in the figure's image (and not the text)
+    fig1_question = "What else is f(x) besides a model? Looking for return values"
+    fig1_media = enriched_mm_texts[0].media[0]
+    fig1_enrichment = fig1_media.info["enriched_description"]
+    assert isinstance(fig1_enrichment, str)
+    fig3_question = "What is Base?"
+    fig3_media = enriched_mm_texts[1].media[-1]
+    fig3_enrichment = fig3_media.info["enriched_description"]
+    assert isinstance(fig3_enrichment, str)
+    cached_exc: AssertionError | None = None
+    if "f(x)" in fig1_enrichment:
+        # If Figure 1's question is answerable, try to answer with it
+        try:
+            unenriched_session1 = await unenriched_docs.aquery(
+                fig1_question, settings=unenriched_settings
+            )
+            assert (
+                CANNOT_ANSWER_PHRASE in unenriched_session1.answer
+            ), "Expected unsure without enrichment"
+            enriched_session1 = await enriched_docs.aquery(
+                fig1_question, settings=enriched_settings
+            )
+            assert [
+                c
+                for c in enriched_session1.contexts
+                if c.id in enriched_session1.used_contexts
+                if c.text.media
+                # Use to_id() to ignore info, just looking at media text/data
+                and any(m.to_id() == fig1_media.to_id() for m in c.text.media)
+            ], "Expected media to be referenced in a used context"
+            assert (
+                CANNOT_ANSWER_PHRASE not in enriched_session1.answer
+            ), f"Expected answer with enrichment {fig1_enrichment}."
+            assert (
+                "0.0" in enriched_session1.answer
+            ), f"Expected answer with enrichment {fig1_enrichment}."
+            assert (
+                "1.0" in enriched_session1.answer
+            ), f"Expected answer with enrichment {fig1_enrichment}."
+            return  # noqa: TRY300
+        except AssertionError as exc:
+            cached_exc = exc
+
+    # Otherwise use Figure 3's question
+    try:
+        unenriched_session2 = await unenriched_docs.aquery(
+            fig3_question, settings=unenriched_settings
+        )
+        assert (
+            CANNOT_ANSWER_PHRASE in unenriched_session2.answer
+        ), "Expected unsure without enrichment"
+        enriched_session2 = await enriched_docs.aquery(
+            fig3_question, settings=enriched_settings
+        )
+        assert [
+            c
+            for c in enriched_session2.contexts
+            if c.id in enriched_session2.used_contexts
+            if c.text.media
+            # Use to_id() to ignore info, just looking at media text/data
+            and any(m.to_id() == fig3_media.to_id() for m in c.text.media)
+        ], "Expected media to be referenced in a used context"
+        assert (
+            CANNOT_ANSWER_PHRASE not in enriched_session2.answer
+        ), f"Expected answer with enrichment {fig3_enrichment}."
+        # We require "molecule" and one of "reference" or "original"
+        assert (
+            "molecule" in enriched_session2.answer.lower()
+        ), f"Expected answer with enrichment {fig3_enrichment}."
+        assert any(
+            x in enriched_session2.answer.lower() for x in ("reference", "original")
+        ), (
+            f"Expected answer with enrichment {fig3_enrichment},"
+            f" got answer {enriched_session2.answer}."
+        )
+    except AssertionError as exc:
+        raise exc from cached_exc
+
+
+@pytest.mark.vcr
+@pytest.mark.asyncio
+async def test_image_enrichment_invalid_image(caplog) -> None:
+    """Confirm an invalid image doesn't crash the image enrichment process."""
+    parsed_text = ParsedText(
+        content={
+            # The image data here is invalid (not a PNG)
+            "1": ("Some text", [ParsedMedia(data=b"not_image_data" * 30, index=0)])
+        },
+        metadata=ParsedMetadata(parsing_libraries=["stub"], total_parsed_text_length=9),
+    )
+
+    enricher = Settings().make_media_enricher()
+    with caplog.at_level("WARNING", logger="paperqa.settings"):
+        result = await enricher(parsed_text)
+    assert "enriched=0" in result, "Expected no enrichment to have occurred"
+    (record_tuple,) = caplog.record_tuples
+    assert (
+        "rejected by the LLM provider" in record_tuple[2]
+    ), "Expected rejection to be documented"
+
+
+@pytest.mark.asyncio
+async def test_image_enrichment_with_oversized_image(caplog) -> None:
+    """Confirm a too-large image doesn't crash the image enrichment process."""
+    parsed_text = ParsedText(
+        content={
+            # An alternate way to test this is use PyMuPDF or Docling reader on a PDF
+            # with a really high DPI setting (> 300)
+            "1": ("Some text", [ParsedMedia(data=b"stub", index=0)])
+        },
+        metadata=ParsedMetadata(parsing_libraries=["stub"], total_parsed_text_length=9),
+    )
+
+    settings = Settings(parsing={"enrichment_llm": "claude-sonnet-4-5-20250929"})
+    enricher = settings.make_media_enricher()  # noqa: FURB184
+    with (
+        caplog.at_level("WARNING", logger="paperqa.settings"),
+        # Use patch over VCR since VCR cassette would be huge
+        patch(
+            "litellm.llms.anthropic.chat.handler.AnthropicChatCompletion.acompletion_function",
+            side_effect=litellm.llms.anthropic.common_utils.AnthropicError(
+                message=(
+                    '{"type":"error","error":{"type":"invalid_request_error",'
+                    '"message":"messages.0.content.0.image.source.base64: image exceeds 5 MB maximum: 6229564 bytes > 5242880 bytes"},'  # noqa: E501
+                    '"request_id":"req_abc123"}'
+                ),
+                status_code=400,
+            ),
+        ) as mock_acompletion_function,
+    ):
+        result = await enricher(parsed_text)
+    assert "enriched=0" in result, "Expected no enrichment to have occurred"
+    assert mock_acompletion_function.await_count >= 1
+    (record_tuple,) = caplog.record_tuples
+    assert (
+        "rejected by the LLM provider" in record_tuple[2]
+    ), "Expected rejection to be documented"
+
+
+@pytest.mark.asyncio
+async def test_code() -> None:
+    settings = Settings.from_name("fast")
+    docs = Docs()
+    # load this script
+    await docs.aadd(
+        THIS_MODULE, "test_paperqa.py", docname="test_paperqa.py", disable_check=True
+    )
+    assert len(docs.docs) == 1
+    session = await docs.aquery("What file is read in by test_code?", settings=settings)
+    assert "test_paperqa.py" in session.answer
+
+
+@pytest.mark.asyncio
+async def test_querying_tables(stub_data_dir: Path) -> None:
+    settings = Settings.from_name("fast")
+
+    docs = Docs()
+    assert await docs.aadd(stub_data_dir / "influence.pdf", settings=settings)
+    # Now, let's modify the system so any tables housed in the Text.text get removed,
+    # and the system can only rely on table images or markdown
+    texts_with_tables = {
+        t
+        for t in docs.texts
+        if t.media and any(m.info.get("type") == "table" for m in t.media)
+    }
+    assert texts_with_tables, "Expected some texts to have parsed tables"
+    for t in texts_with_tables:
+        # Wipe text but keep embedding (for retrieval), to confirm tables get used
+        t.text = "Placeholder"
+        # Wipe non-table media (e.g. images)
+        t.media = [m for m in t.media if m.info.get("type") == "table"]
+    docs.texts = list(texts_with_tables)
+    session = await docs.aquery(
+        "What osteotomy gap (mm) has the bone volume per slice?", settings=settings
+    )
+    assert session.used_contexts
+    used_texts = [c.text for c in session.contexts if c.id in session.used_contexts]
+    assert all(
+        [m.data for m in t.media] for t in used_texts
+    ), "Expected image data to be present in the used contexts"
+    # Check for 1.0mm, 1.0-mm, 1.0 mm
+    assert re.search(r"1\.0[ -]?mm", session.answer)
+    assert session.cost > 0
+
+    # Filter contexts for HTTP requests, and ensure no images are present
+    session.filter_content_for_user()
+    assert session.used_contexts
+    used_texts_after_filter = [
+        c.text for c in session.contexts if c.id in session.used_contexts
+    ]
+    assert all(
+        not t.media for t in used_texts_after_filter
+    ), "Expected no media for lightweight HTTP requests"
+
+
+@pytest.mark.flaky(reruns=2, only_rerun=["AssertionError"])
+@pytest.mark.asyncio
+async def test_images(stub_data_dir: Path) -> None:
+    settings = Settings.from_name("fast")
+    # Let's use default prompting set up, so we can get JSON summary-support
+    settings.prompts = type(settings.prompts)()
+    # We don't support image embeddings yet, so disable embedding
+    settings.answer.evidence_retrieval = False
+    settings.parsing.defer_embedding = True
+    settings.prompts.summary_json_system = summary_json_multimodal_system_prompt
+
+    docs = Docs()
+    districts_docname = await docs.aadd(
+        stub_data_dir / "sf_districts.png",
+        citation=(
+            '"File:San francisco districts.png." Wikimedia Commons.'
+            " 7 Sep 2023, 07:38 UTC."
+            " <https://commons.wikimedia.org/w/index.php?title=File:San_francisco_districts.png&oldid=799209398>"
+            " July 2025."
+        ),
+        settings=settings,
+    )
+    assert districts_docname, "Expected successful image addition"
+    (districts_doc,) = (d for d in docs.docs.values() if d.docname == districts_docname)
+    session = await docs.aquery(
+        "What districts neighbor the Western Addition?", settings=settings
+    )
+    assert (
+        sum(
+            district in session.answer
+            for district in ("The Avenues", "Golden Gate", "Civic Center", "Haight")
+        )
+        >= 2
+    ), f"Expected at least two neighbors to be matched in answer {session.answer!r}"
+    assert session.cost > 0
+    contexts_used = [
+        c
+        for c in session.contexts
+        if c.id in session.used_contexts and c.text.doc == districts_doc
+    ]
+    assert contexts_used
+    assert all(bool(c.used_images) for c in contexts_used)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_media_context_creation(stub_data_dir: Path) -> None:
+    settings = Settings(
+        prompts={"summary_json_system": summary_json_multimodal_system_prompt},
+        parsing={"parse_pdf": docling_parse_pdf_to_pages},
+    )
+
+    docs = Docs()
+    assert await docs.aadd(
+        stub_data_dir / "duplicate_media.pdf",
+        citation="FutureHouse, 2025, Accessed now",  # Skip citation inference
+        title="SF Districts in the style of Andy Warhol, with Math",  # Skip title inference
+        settings=settings,
+    )
+    num_raw_media = sum(len(t.media) for t in docs.texts)
+    with patch.object(
+        LLMModel, "call_single", side_effect=LLMModel.call_single, autospec=True
+    ) as mock_call_single:
+        session = await docs.aquery(
+            "What districts neighbor the Western Addition?", settings=settings
+        )
+    context_user_msg = mock_call_single.await_args_list[0][1]["messages"][1]
+    assert isinstance(context_user_msg, Message)
+    assert context_user_msg.content
+    content_list = json.loads(context_user_msg.content)
+    assert isinstance(content_list, list)
+    assert (
+        sum("image_url" in x for x in content_list) < num_raw_media / 2
+    ), "Expected some deduplication to take place during context creation"
+    assert (
+        sum(
+            district in session.answer
+            for district in ("The Avenues", "Golden Gate", "Civic Center", "Haight")
+        )
+        >= 2
+    ), f"Expected at least two neighbors to be matched in answer {session.answer!r}"
+    assert session.cost > 0
+
+
+@pytest.mark.flaky(reruns=2, only_rerun=["AssertionError"])
+@pytest.mark.asyncio
+async def test_images_corrupt(stub_data_dir: Path, caplog) -> None:
+    settings = Settings.from_name("fast")
+    # Let's use default prompting set up, so we can get JSON summary-support
+    settings.prompts = type(settings.prompts)()
+    # We don't support image embeddings yet, so disable embedding
+    settings.answer.evidence_retrieval = False
+    settings.parsing.defer_embedding = True
+    settings.prompts.summary_json_system = summary_json_multimodal_system_prompt
+
+    docs = Docs()
+    districts_docname = await docs.aadd(
+        stub_data_dir / "sf_districts.png",
+        citation=(
+            '"File:San francisco districts.png." Wikimedia Commons.'
+            " 7 Sep 2023, 07:38 UTC."
+            " <https://commons.wikimedia.org/w/index.php?title=File:San_francisco_districts.png&oldid=799209398>"
+            " July 2025."
+        ),
+        settings=settings,
+    )
+    assert districts_docname, "Expected successful image addition"
+    (districts_doc,) = (d for d in docs.docs.values() if d.docname == districts_docname)
+    (districts_text,) = docs.texts
+    assert not districts_text.text, "Test expects no text content from image addition"
+    for media in (t.media for t in docs.texts if t.doc == districts_doc and t.media):
+        for m in media:
+            # Validate the image, then chop the image in half (breaking it), and
+            # confirm it's no longer valid (and that we can detect it's no longer valid)
+            validate_image(io.BytesIO(m.data))
+            m.data = m.data[: len(m.data) // 2]
+            with pytest.raises(OSError, match="truncated"):
+                validate_image(io.BytesIO(m.data))
+
+    # With a garbage image, we can't make contexts. So let's confirm that's the case
+    session = await docs.aget_evidence(
+        "What districts neighbor the Western Addition?", settings=settings
+    )
+    assert not session.contexts, "Expected no contexts to be made from a bad image."
+    assert any(
+        x in caplog.text.lower()
+        for x in (
+            "unsupported image",  # OpenAI
+            "could not process image",  # Anthropic
+        )
+    ), "Expected a caught exception about an unsupported image."
+
+    # By suppressing the use of images, we can actually gather evidence now
+    settings.answer.evidence_text_only_fallback = True
+    session = await docs.aget_evidence(
+        "What districts neighbor the Western Addition?", settings=settings
+    )
+    assert (
+        not session.contexts
+    ), "Expected no contexts to be made from a bad image that has no text"
+    assert session.cost > 0, "Expected some costs to have been incurred in our attempt"
+
+
+@pytest.mark.vcr(before_record_request=record_non_llm_requests)
+@pytest.mark.parametrize(
+    "parser",
+    [
+        pytest.param(pymupdf_parse_pdf_to_pages, id="pymupdf"),
+        pytest.param(docling_parse_pdf_to_pages, id="docling"),
+        pytest.param(nemotron_parse_pdf_to_pages, id="nemotron"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_equations(stub_data_dir: Path, parser: PDFParserFn) -> None:
+    settings = Settings(parsing={"parse_pdf": parser})
+
+    docs = Docs()
+    assert await docs.aadd(
+        stub_data_dir / "duplicate_media.pdf",
+        citation="FutureHouse, 2025, Accessed now",  # Skip citation inference
+        title="SF Districts in the style of Andy Warhol, with Math",  # Skip title inference
+        settings=settings,
+    )
+    assert docs.texts
+    enrichments = []  # Use to debug flaky tests
+    for m in docs.texts[0].media:
+        if m.info.get("type") == "table":
+            continue  # Skip tables since we want equations
+        enrichment = m.info["enriched_description"]
+        assert isinstance(enrichment, str)
+        if (
+            # Yes 'mathematical equation' is looser than stating it to be LaTeX,
+            # but for the purposes of this test it's alright
+            any(x in enrichment for x in ("LaTeX", "latex", "mathematical equation"))
+            and r"\sqrt" in enrichment
+        ):
+            return
+        enrichments.append(enrichment)
+    raise AssertionError(
+        "Failed to find enrichment for the target equation,"
+        f" all enrichments: {enrichments}"
+    )
+
+
+def test_missing_page_doesnt_crash_us() -> None:
+    stub_parsed_text = ParsedText(
+        content={
+            "1": "A",
+            # Page 2 was totally blank
+            "3": "C",
+        },
+        metadata=ParsedMetadata(parsing_libraries=["stub"], total_parsed_text_length=2),
+    )
+    stub_doc = Doc(docname="stub", citation="stub", dockey="stub")
+    (text,) = chunk_pdf(stub_parsed_text, stub_doc, chunk_chars=100, overlap=5)
+    assert text.doc == stub_doc
+    assert "1-3" in text.name
+    assert text.text == "AC"
+
+
+def test_zotero() -> None:
+    from paperqa.contrib import ZoteroDB
+
+    Docs()
+    with contextlib.suppress(ValueError):  # Close enough
+        ZoteroDB()  # "group" if group library
+
+
+@pytest.mark.asyncio
+async def test_too_much_evidence(
+    stub_data_dir: Path, stub_data_dir_w_near_dupes: Path
+) -> None:
+    doc_path = stub_data_dir / "obama.txt"
+    mini_settings = Settings(llm="gpt-4o-mini", summary_llm="gpt-4o-mini")
+    docs = Docs()
+    await docs.aadd(
+        doc_path, "WikiMedia Foundation, 2023, Accessed now", settings=mini_settings
+    )
+    # add with new dockey
+    await docs.aadd(
+        stub_data_dir_w_near_dupes / "obama_modified.txt",
+        "WikiMedia Foundation, 2023, Accessed now",
+        settings=mini_settings,
+    )
+    settings = Settings.from_name("fast")
+    settings.answer.evidence_k = 10
+    settings.answer.answer_max_sources = 10
+    await docs.aquery("What is Barrack's greatest accomplishment?", settings=settings)
+
+
+@pytest.mark.asyncio
+async def test_custom_prompts(stub_data_dir: Path) -> None:
+    my_qaprompt = (
+        "Answer the question '{question}' using the country name alone. For example: A:"
+        " United States\nA: Canada\nA: Mexico\n\n Using the"
+        " context:\n\n{context}\n\nA: "
+    )
+    settings = Settings.from_name("fast")
+    settings.prompts.qa = my_qaprompt
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "bates.txt", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    session = await docs.aquery(
+        "What country is Frederick Bates from?", settings=settings
+    )
+    assert "United States" in session.answer
+
+
+@pytest.mark.asyncio
+async def test_pre_prompt(stub_data_dir: Path) -> None:
+    pre = "What is water's boiling point in Fahrenheit? Please respond with a complete sentence."
+
+    settings = Settings.from_name("fast")
+    settings.prompts.pre = pre
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "bates.txt", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    assert (
+        "212" not in (await docs.aquery("What is the boiling point of water?")).answer
+    )
+    assert (
+        "212"
+        in (
+            await docs.aquery("What is the boiling point of water?", settings=settings)
+        ).answer
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_prompt(stub_data_dir: Path) -> None:
+    post = "The opposite of down is"
+    settings = Settings.from_name("fast")
+    settings.prompts.post = post
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "bates.txt", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    response = await docs.aquery("What country is Bates from?", settings=settings)
+    assert "up" in response.answer.lower()
+
+
+@pytest.mark.asyncio
+async def test_external_doc_index(stub_data_dir: Path) -> None:
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "flag_day.html", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    # force embedding
+    _ = await docs.aget_evidence(query="What is the date of flag day?")
+    docs2 = Docs(texts_index=docs.texts_index)
+    assert not docs2.docs
+    assert (await docs2.aget_evidence("What is the date of flag day?")).contexts
+
+
+@pytest.mark.asyncio
+async def test_context_inner_outer_prompt(stub_data_dir: Path) -> None:
+    prompt_settings = Settings()
+
+    # try bogus prompt
+    with pytest.raises(ValueError, match="Context inner prompt must"):
+        prompt_settings.prompts.context_inner = "A:"
+
+    prompt_settings = Settings()
+    with pytest.raises(ValueError, match="Context outer prompt can only"):
+        prompt_settings.prompts.context_outer = "{foo}"
+
+    # make sure prompt gets used
+    settings = Settings.from_name("fast")
+    settings.prompts.context_inner = "{name} @@@@@ {text}\nFrom: {citation}"
+    settings.prompts.context_outer = "{context_str}"
+    docs = Docs()
+    await docs.aadd(
+        stub_data_dir / "bates.txt", "WikiMedia Foundation, 2023, Accessed now"
+    )
+    response = await docs.aquery("What country is Bates from?", settings=settings)
+    assert "@@@@@" in response.context
+    assert "WikiMedia Foundation, 2023" in response.context
+    assert "Valid Keys" not in response.context
+
+
+@pytest.mark.parametrize(
+    ("parsing1", "parsing2"),
+    [
+        pytest.param(
+            {"parse_pdf": pymupdf_parse_pdf_to_pages},
+            {"parse_pdf": pypdf_parse_pdf_to_pages},
+            id="parse_pdf",
+        ),
+        pytest.param({}, {"multimodal": False}, id="multimodal"),
+        pytest.param(
+            {"reader_config": {"chunk_chars": 5000, "overlap": 250}},
+            {"reader_config": {"chunk_chars": 5000, "overlap": 250, "full_page": True}},
+            id="full-page",
+        ),
+    ],
+)
+def test_get_index_name_uniqueness(
+    parsing1: dict[str, Any], parsing2: dict[str, Any]
+) -> None:
+    settings1 = Settings(parsing=ParsingSettings(**parsing1))
+    settings2 = Settings(parsing=ParsingSettings(**parsing2))
+    names = {settings1.get_index_name(), settings2.get_index_name()}
+    assert (
+        len(names) == 2
+    ), "Expected autogenerated index names to differ if parsers differ"
+    assert all(
+        n.startswith("pqa_index") for n in names
+    ), "Expected index names to be clear they're associated with PaperQA"
+
+
+def test_case_insensitive_matching():
+    assert strings_similarity("my test sentence", "My test sentence") == 1.0
+    assert strings_similarity("a b c d e", "a b c f") == 0.5
+    assert strings_similarity("A B c d e", "a b c f") == 0.5
+
+
+@pytest.mark.parametrize(
+    "doi_journals",
+    [
+        {"doi": "https://doi.org/10.31224/4087", "journal": "EngRxiv"},
+        {"doi": "10.26434/chemrxiv-2021-hz0qp", "journal": "ChemRxiv"},
+        {"doi": "https://doi.org/10.1101/2024.11.04.621790", "journal": "BioRxiv"},
+        {"doi": "10.1101/2024.11.02.24316629", "journal": "MedRxiv"},
+        # ensure we don't crash when externalIds key is included, but it's None
+        {
+            "doi": "https://doi.org/10.48550/arXiv.2407.10362",
+            "journal": "ArXiv",
+            "other": {"externalIds": None},
+        },
+    ],
+)
+def test_dois_resolve_to_correct_journals(doi_journals):
+    details = DocDetails(doi=doi_journals["doi"])
+    assert details.journal == doi_journals["journal"]
+
+
+def test_none_values() -> None:
+    """Check can handle or crash as expected with None inputs."""
+    with pytest.raises(
+        (ValidationError, TypeError), match="fields_to_overwrite_from_metadata"
+    ):
+        DocDetails(fields_to_overwrite_from_metadata=None)
+
+
+def test_docdetails_merge_with_non_list_fields() -> None:
+    """Check republication where the source metadata has different shapes."""
+    initial_date = datetime(2023, 1, 1)
+    doc1 = DocDetails(
+        citation="Citation 1",
+        publication_date=initial_date,
+        docname="Document 1",
+        dockey="key1",
+        # NOTE: doc1 has non-list bibtex_source and list client_source
+        other={"bibtex_source": "source1", "client_source": ["client1"]},
+    )
+
+    later_publication_date = initial_date + timedelta(weeks=13)
+    doc2 = DocDetails(
+        citation=doc1.citation,
+        publication_date=later_publication_date,
+        docname=doc1.docname,
+        dockey=doc1.dockey,
+        # NOTE: doc2 has list bibtex_source and non-list client_source
+        other={"bibtex_source": ["source2"], "client_source": "client2"},
+    )
+
+    # Merge the two DocDetails instances
+    merged_doc = doc1 + doc2
+
+    assert {"source1", "source2"}.issubset(
+        merged_doc.other["bibtex_source"]
+    ), "Expected merge to keep both bibtex sources"
+    assert {"client1", "client2"}.issubset(
+        merged_doc.other["client_source"]
+    ), "Expected merge to keep both client sources"
+    assert isinstance(merged_doc, DocDetails), "Merged doc should also be DocDetails"
+
+
+def test_docdetails_merge_with_list_fields() -> None:
+    """Check republication where the source metadata is the same shape."""
+    initial_date = datetime(2023, 1, 1)
+    doc1 = DocDetails(
+        citation="Citation 1",
+        publication_date=initial_date,
+        docname="Document 1",
+        dockey="key1",
+        # NOTE: doc1 has list bibtex_source and list client_source
+        other={"bibtex_source": ["source1"], "client_source": ["client1"]},
+    )
+
+    later_publication_date = initial_date + timedelta(weeks=13)
+    doc2 = DocDetails(
+        citation=doc1.citation,
+        publication_date=later_publication_date,
+        docname=doc1.docname,
+        dockey=doc1.dockey,
+        # NOTE: doc2 has list bibtex_source and list client_source
+        other={"bibtex_source": ["source2"], "client_source": ["client2"]},
+    )
+
+    # Merge the two DocDetails instances
+    merged_doc = doc1 + doc2
+
+    assert {"source1", "source2"}.issubset(
+        merged_doc.other["bibtex_source"]
+    ), "Expected merge to keep both bibtex sources"
+    assert {"client1", "client2"}.issubset(
+        merged_doc.other["client_source"]
+    ), "Expected merge to keep both client sources"
+    assert isinstance(merged_doc, DocDetails), "Merged doc should also be DocDetails"
+
+
+def test_docdetails_deserialization(tmp_path) -> None:
+    deserialize_to_doc = {
+        "citation": "stub",
+        "dockey": "stub",
+        "docname": "Stub",
+        "embedding": None,
+        "formatted_citation": "stub",
+        "fields_to_overwrite_from_metadata": {"key", "doc_id", "docname", "citation"},
+    }
+    deepcopy_deserialize_to_doc = deepcopy(deserialize_to_doc)
+    doc = Doc(**deserialize_to_doc)
+    assert not isinstance(doc, DocDetails), "Should just be Doc, not DocDetails"
+    assert (
+        deserialize_to_doc == deepcopy_deserialize_to_doc
+    ), "Deserialization should not mutate input"
+
+    serialized_doc_details = DocDetails(**deserialize_to_doc).model_dump(
+        exclude_none=True
+    )
+    for key, value in {
+        "docname": "unknownauthorsUnknownyearunknowntitle",
+        "citation": "Unknown authors. Unknown title. Unknown journal, Unknown year.",
+        "key": "unknownauthorsUnknownyearunknowntitle",
+        "bibtex": (
+            '@article{unknownauthorsUnknownyearunknowntitle,\n    author = "authors,'
+            ' Unknown",\n    title = "Unknown title",\n    year = "Unknown year",\n   '
+            ' journal = "Unknown journal"\n}\n'
+        ),
+        "other": {"bibtex_source": ["self_generated"]},
+        "formatted_citation": (
+            "Unknown authors. Unknown title. Unknown journal, Unknown year."
+        ),
+    }.items():
+        assert serialized_doc_details[key] == value
+    assert (
+        deserialize_to_doc == deepcopy_deserialize_to_doc
+    ), "Deserialization should not mutate input"
+
+    if sys.version_info < (3, 12, 0):
+        return  # csv.QUOTE_NOTNULL was added in Python 3.12
+    if sys.version_info < (3, 13, 0):
+        # From https://docs.python.org/3.12/library/csv.html:
+        # > Note Due to a bug, constants QUOTE_NOTNULL and QUOTE_STRINGS
+        # > do not affect behaviour of reader objects. This bug is fixed in Python 3.13.
+        # As we use csv.DictReader, we're impacted by this so let's just skip
+        return
+
+    doc_details = DocDetails(
+        **deserialize_to_doc, other={"apple": "sauce"}, authors=["Thomas Anderson"]
+    )
+    DocDetails.to_csv([doc_details], target_csv_path=Path(tmp_path) / "manifest.csv")
+    with open(tmp_path / "manifest.csv", encoding="utf-8") as f:
+        csv_deserialized = DocDetails(
+            # type ignore comments are here since mypy can't recognize pytest skip
+            **next(csv.DictReader(f.readlines(), quoting=csv.QUOTE_NOTNULL))  # type: ignore[attr-defined,unused-ignore]
+        )
+    assert doc_details == csv_deserialized, "Round-trip CSV deserialization failed"
+
+
+def test_docdetails_doc_id_roundtrip() -> None:
+    """Test that DocDetails can be initialized with doc_id or doi inputs."""
+    test_doi = "10.1234/test.doi"
+    test_doi_doc_id = encode_id(test_doi.lower())
+    test_specified_doc_id = "abc123"
+    # first we test without a doc_id or doi, ensure it's still valid
+    doc_details_no_doi_no_doc_id = DocDetails(
+        docname="test_doc",
+        citation="Test Citation",
+        dockey="test_dockey",
+        embedding=None,
+        formatted_citation="Formatted Test Citation",
+    )
+
+    assert (
+        doc_details_no_doi_no_doc_id.doc_id != test_doi_doc_id
+    ), "DocDetails without doc_id should not match test_doi_doc_id"
+    assert (
+        doc_details_no_doi_no_doc_id.doi is None
+    ), "DocDetails without doi should have None doi"
+    assert doc_details_no_doi_no_doc_id.dockey == doc_details_no_doi_no_doc_id.doc_id
+
+    # now round-trip serializaiton should keep the same doc_id
+    new_no_doi_no_doc_id = DocDetails(
+        **doc_details_no_doi_no_doc_id.model_dump(exclude_none=True)
+    )
+    assert (
+        new_no_doi_no_doc_id.doc_id == doc_details_no_doi_no_doc_id.doc_id
+    ), "DocDetails without doc_id should keep the same doc_id after serialization"
+
+    # since validation runs on assignment, make sure we can assign correctly
+    doc_details_no_doi_no_doc_id.doc_id = test_specified_doc_id
+    assert (
+        doc_details_no_doi_no_doc_id.doc_id == test_specified_doc_id
+    ), "DocDetails with doc_id should match test_specified_doc_id"
+    assert doc_details_no_doi_no_doc_id.dockey == doc_details_no_doi_no_doc_id.doc_id
+
+    # now let's do this with a doi
+    doc_details_with_doi_no_doc_id = DocDetails(
+        doi=test_doi,
+        title=r"A Stub | \emph{Stub Title}",
+        docname="test_doc",
+        citation="Test Citation",
+        dockey="test_dockey",
+        embedding=None,
+        formatted_citation="Formatted Test Citation",
+    )
+    assert (
+        doc_details_with_doi_no_doc_id.doc_id == test_doi_doc_id
+    ), "DocDetails with doc_id should not match test_doi_doc_id"
+    assert (
+        doc_details_with_doi_no_doc_id.doi == test_doi
+    ), "DocDetails with doi should match test_doi"
+    assert (
+        doc_details_with_doi_no_doc_id.dockey == doc_details_with_doi_no_doc_id.doc_id
+    )
+    assert (
+        doc_details_with_doi_no_doc_id.make_filename()
+        == "A Stub - -emph{Stub Title}_7f8a71c920c202c5"
+    )
+
+    # round-trip serializaiton should keep the same doc_id
+    new_with_doi_no_doc_id = DocDetails(
+        **doc_details_with_doi_no_doc_id.model_dump(exclude_none=True)
+    )
+    assert (
+        new_with_doi_no_doc_id.doc_id == doc_details_with_doi_no_doc_id.doc_id
+    ), "DocDetails with doc_id should keep the same doc_id after serialization"
+    assert (
+        new_with_doi_no_doc_id.make_filename()
+        == "A Stub - -emph{Stub Title}_7f8a71c920c202c5"
+    )
+
+    # since validation runs on assignment, make sure we can assign correctly
+    doc_details_with_doi_no_doc_id.doc_id = test_specified_doc_id
+    assert (
+        doc_details_with_doi_no_doc_id.doc_id == test_specified_doc_id
+    ), "DocDetails with doc_id should match test_specified_doc_id"
+    assert (
+        doc_details_with_doi_no_doc_id.dockey == doc_details_with_doi_no_doc_id.doc_id
+    )
+
+    # let's specify the doc_id directly
+    doc_details_no_doi_with_doc_id = DocDetails(
+        doc_id=test_specified_doc_id,
+        docname="test_doc",
+        citation="Test Citation",
+        dockey="test_dockey",
+        embedding=None,
+        formatted_citation="Formatted Test Citation",
+    )
+    assert (
+        doc_details_no_doi_with_doc_id.doc_id == test_specified_doc_id
+    ), "DocDetails with doc_id should not match test_specified_doc_id"
+    assert (
+        doc_details_no_doi_with_doc_id.doi is None
+    ), "DocDetails without doi should be None"
+    assert (
+        doc_details_no_doi_with_doc_id.dockey == doc_details_no_doi_with_doc_id.doc_id
+    ), "DocDetails dockey should match doc_id for the same object"
+
+    # round-trip serializaiton should keep the same doc_id
+    new_no_doi_with_doc_id = DocDetails(
+        **doc_details_no_doi_with_doc_id.model_dump(exclude_none=True)
+    )
+    assert (
+        new_no_doi_with_doc_id.doc_id == doc_details_with_doi_no_doc_id.doc_id
+    ), "DocDetails with doc_id should keep the same doc_id after serialization"
+
+    # since validation runs on assignment, make sure we can assign correctly
+    new_no_doi_with_doc_id.doc_id = test_doi_doc_id
+    assert (
+        new_no_doi_with_doc_id.doc_id == test_doi_doc_id
+    ), "DocDetails with doc_id should match test_specified_doc_id"
+    assert new_no_doi_with_doc_id.dockey == new_no_doi_with_doc_id.doc_id
+
+    # now we specify both doi and doc_id, ensuring doc_id takes precedence
+    doc_details_with_doi_with_doc_id = DocDetails(
+        doc_id=test_specified_doc_id,
+        doi=test_doi,
+        docname="test_doc",
+        citation="Test Citation",
+        dockey="test_dockey",
+        embedding=None,
+        formatted_citation="Formatted Test Citation",
+    )
+    assert (
+        doc_details_with_doi_with_doc_id.doc_id == test_specified_doc_id
+    ), "DocDetails with doc_id should not match test_specified_doc_id"
+    assert (
+        doc_details_with_doi_with_doc_id.doi == test_doi
+    ), "DocDetails without doi should match test_doi"
+    assert (
+        doc_details_with_doi_with_doc_id.dockey
+        == doc_details_with_doi_with_doc_id.doc_id
+    )
+
+    # round-trip serializaiton should keep the same doc_id
+    new_with_doi_with_doc_id = DocDetails(
+        **doc_details_with_doi_with_doc_id.model_dump(exclude_none=True)
+    )
+    assert (
+        new_with_doi_with_doc_id.doc_id == doc_details_with_doi_with_doc_id.doc_id
+    ), "DocDetails with doc_id should keep the same doc_id after serialization"
+
+    # since validation runs on assignment, make sure we can assign correctly
+    new_with_doi_with_doc_id.doc_id = test_doi_doc_id
+    assert (
+        new_with_doi_with_doc_id.doc_id == test_doi_doc_id
+    ), "DocDetails with doc_id should match test_specified_doc_id"
+    assert new_with_doi_with_doc_id.dockey == new_with_doi_with_doc_id.doc_id
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize("use_partition", [True, False])
+@pytest.mark.asyncio
+async def test_partitioning_fn_docs(use_partition: bool) -> None:
+    settings = Settings.from_name("fast")
+    settings.answer.evidence_k = 2  # Match positive or negative statement count below
+
+    # imagine we have some special selection we want to
+    # embedding rank by itself
+    def partition_by_citation(t: Embeddable) -> int:
+        if isinstance(t, Text) and "negative" in t.doc.citation:
+            return 1
+        return 0
+
+    partitioning_fn = partition_by_citation if use_partition else None
+
+    docs = Docs()
+
+    assert isinstance(
+        docs.texts_index, NumpyVectorStore
+    ), "We want this test to cover NumpyVectorStore"
+
+    # add docs that we can use our partitioning function on
+    positive_statements_doc = Doc(
+        docname="positive", citation="positive", dockey="positive"
+    )
+    negative_statements_doc = Doc(
+        docname="negative", citation="negative", dockey="negative"
+    )
+    texts = []
+    for i, (statement, doc) in enumerate(
+        [
+            ("I like turtles", positive_statements_doc),
+            ("I like cats", positive_statements_doc),
+            ("I don't like turtles", negative_statements_doc),
+            ("I don't like cats", negative_statements_doc),
+        ]
+    ):
+        texts.append(Text(text=statement, name=f"statement_{i}", doc=doc))
+        texts[-1].embedding = (
+            await settings.get_embedding_model().embed_documents([texts[-1].text])
+        )[0]
+    await docs.aadd_texts(
+        texts=[t for t in texts if t.doc.docname == "positive"],
+        doc=positive_statements_doc,
+    )
+    await docs.aadd_texts(
+        texts=[t for t in texts if t.doc.docname == "negative"],
+        doc=negative_statements_doc,
+    )
+
+    # look at the raw rankings first, compare them with and without partitioning
+    await docs._build_texts_index(settings.get_embedding_model())
+
+    partitioned_texts, _ = cast(
+        "tuple[Sequence[Text], list[float]]",
+        await docs.texts_index.partitioned_similarity_search(
+            "What do I like?",
+            k=4,
+            embedding_model=settings.get_embedding_model(),
+            partitioning_fn=partition_by_citation,
+        ),
+    )
+
+    default_texts, _ = cast(
+        "tuple[Sequence[Text], list[float]]",
+        await docs.texts_index.similarity_search(
+            "What do I like?", k=4, embedding_model=settings.get_embedding_model()
+        ),
+    )
+
+    assert partitioned_texts != default_texts, "Should have different rankings"
+
+    # the "like" statements should be before the "don't" like by default
+    assert all(
+        "don't" not in c.text for c in default_texts[:2]
+    ), "None of the 'don't like X' should be first"
+    assert all(
+        "don't" in c.text for c in default_texts[2:]
+    ), "'don't like X' should be second"
+
+    # Otherwise they should be interleaved
+    assert (
+        sum(int("don't" in c.text) for c in default_texts[:2])
+        + sum(int("don't" not in c.text) for c in default_texts[:2])
+        == 2
+    ), "Should have 1 'like' and 1 'don't like'"
+
+    assert (
+        sum(int("don't" in c.text) for c in default_texts[2:])
+        + sum(int("don't" not in c.text) for c in default_texts[2:])
+        == 2
+    ), "Should have 1 'like' and 1 'don't like'"
+
+    # Get the contexts -- ranked via partitioning
+    # without partitioning, the "I like X" statements would be ranked first
+    # with partitioning, we are forcing them to be interleaved, thus
+    # at least one "I don't like X" statements will be in the top 2
+    session = await docs.aget_evidence(
+        "What do I like or dislike?", settings=settings, partitioning_fn=partitioning_fn
+    )
+    assert docs.texts_index.texts == docs.texts == texts
+
+    assert session.contexts, "Test requires contexts to be made"
+    if use_partition:
+        assert any(
+            "don't" in c.text.text for c in session.contexts
+        ), 'Should have at least one "I don\'t like X" statement'
+    else:
+        assert all(
+            "don't" not in c.text.text for c in session.contexts
+        ), "None of the 'don't like X' statements should be included"
+
+
+class TestLLMParseJson:
+    """Tests for extracting JSON strings from LLM Response and ensuring proper formatting."""
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help\n\n"
+                '{\n"summary": "Lorem Ipsum",\n"relevance_score": 8\n}'
+                "\n\nHope this helps!",
+                id="json-newlines-no-markdown-block",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                '```json\n{\n"summary": "Lorem Ipsum",\n"relevance_score": 8\n}\n```'
+                "\n\nHope this helps!",
+                id="json-newlines-with-markdown-block",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                '```json {    "summary": "Lorem Ipsum",    "relevance_ score": 8 } ```',
+                id="removing-think-tags",
+            ),
+            pytest.param(
+                "I am here to help"
+                '{   "summary": "Lorem Ipsum",   "relevance_score": 8 }'
+                "Hope this helps!",
+                id="removing-intro-outro-text",
+            ),
+            pytest.param(
+                "I am here to help"
+                '{\n   "summary": "Lorem Ipsum",\n   "relevance_score": "8" \n}'
+                "Hope this helps!",
+                id="with-newlines-and-quotes",
+            ),
+        ],
+    )
+    def test_basic_json_extraction(self, input_text: str) -> None:
+        output = {"summary": "Lorem Ipsum", "relevance_score": 8}
+        assert llm_parse_json(input_text) == output
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            pytest.param(
+                '<think> Thinking </think>\n I am here to help\n\n{\n"summary": "Lorem'
+                ' Ipsum\n\ndolor sit amet",\n"relevance_score": 8\n}\nHope this helps!',
+                id="handling-newlines-in-json-values",
+            ),
+        ],
+    )
+    def test_handling_newlines(self, input_text: str) -> None:
+        output = {"summary": "Lorem Ipsum\n\ndolor sit amet", "relevance_score": 8}
+        assert llm_parse_json(input_text) == output
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help"
+                '```json {   "summary": "Lorem Ipsum",   "relevance_score": 7.6 } ```'
+                "Hope this helps!",
+                id="float-relevance-score",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help"
+                '```json {   "summary": "Lorem Ipsum",   "relevance_score": "8" } ```'
+                "Hope this helps!",
+                id="string-relevance-score",
+            ),
+            pytest.param(
+                '<think> Thinking </think>I am here to help```json {   "summary":'
+                ' "Lorem Ipsum",   "relevance_score": "8/10" } ```Hope this helps!',
+                id="string-relevance-score-fraction-1",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help"
+                '```json {   "summary": "Lorem Ipsum",   "relevance_score": "4/5" } ```'
+                "Hope this helps!",
+                id="string-relevance-score-fraction-2",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help"
+                '```json {   "summary": "Lorem Ipsum",   "relevance_score": 8/10 } ```'
+                "Hope this helps!",
+                id="non-string-relevance-score-fraction-3",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help"
+                '```json {   "summary": "Lorem Ipsum",   "relevance_score": 4/5 } ```'
+                "Hope this helps!",
+                id="non-string-relevance-score-fraction-4",
+            ),
+        ],
+    )
+    def test_relevance_score_parsing(self, input_text: str) -> None:
+        output = {"summary": "Lorem Ipsum", "relevance_score": 8}
+        assert llm_parse_json(input_text) == output
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help."
+                '```json {    "summary": "Lorem Ipsum",    "relevance-score": 8 } ```'
+                "Hope this helps!",
+                id="fixing-relevance-score-key-1",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help. "
+                '```json {    "summary": "Lorem Ipsum",    "relevance_ score": 8 } ```'
+                "Hope this helps!",
+                id="fixing-relevance-score-key-2",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help."
+                '```json {    "summary": "Lorem Ipsum",    "score": 8 } ```'
+                "Hope this helps!",
+                id="fixing-relevance-score-key-3",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help."
+                '```json {    "summary": "Lorem Ipsum",    "relevance score": 8 } ```'
+                "Hope this helps!",
+                id="fixing-relevance-score-key-4",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help."
+                '```json {    "summary": "Lorem Ipsum",    "relevance": 8 } ```'
+                "Hope this helps!",
+                id="fixing-relevance-score-key-5",
+            ),
+        ],
+    )
+    def test_json_keys(self, input_text: str) -> None:
+        output = {"summary": "Lorem Ipsum", "relevance_score": 8}
+        assert llm_parse_json(input_text) == output
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help."
+                '{   "summary": "Lorem Ipsum",   "relevance_score": 8, }'
+                "Hope this helps!",
+                id="fixing-broken-json-formatting-in-string-comma-1",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help."
+                '{   "summary": "Lorem Ipsum", ,  "relevance_score": 8 }'
+                "Hope this helps!",
+                id="fixing-broken-json-formatting-in-string-comma-2",
+            ),
+            pytest.param(
+                "<think> Thinking </think>"
+                "I am here to help."
+                '{ ,  "summary": "Lorem Ipsum",  "relevance_score": 8 }'
+                "Hope this helps!",
+                id="fixing-broken-json-formatting-in-string-comma-3",
+            ),
+            pytest.param(
+                '{   "summary": "Lorem Ipsum"   "relevance_score": 8 }',
+                id="missing-comma-between-fields",
+            ),
+        ],
+    )
+    def test_json_broken_formatting(self, input_text: str) -> None:
+        output = {"summary": "Lorem Ipsum", "relevance_score": 8}
+        assert llm_parse_json(input_text) == output
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            pytest.param(
+                "<think> Thinking </think>Lorem Ipsum. Hope this helps!",
+                id="non-json-string-with-think-tags",
+            ),
+            pytest.param(
+                "Lorem Ipsum. Hope this helps!",
+                id="non-json-string-no-think-tags",
+            ),
+        ],
+    )
+    def test_fallback_non_json(self, input_text: str) -> None:
+        output = {"summary": "Lorem Ipsum. Hope this helps!"}
+        assert llm_parse_json(input_text) == output
+
+    @pytest.mark.parametrize(
+        ("input_text", "expected_output"),
+        [
+            ('{"example": "\\json"}', {"example": "\\json"}),
+            ('{"example": "this is a \\"json\\""}', {"example": 'this is a "json"'}),
+        ],
+    )
+    def test_llm_parse_json_with_escaped_characters(self, input_text, expected_output):
+        assert llm_parse_json(input_text) == expected_output
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            pytest.param(
+                '{\n  "summary": "An excerpt with "quoted stuff" or "maybe more." More'
+                ' stuff (with parenthesis).",\n  "relevance_score": "8"\n}'
+            ),
+        ],
+    )
+    def test_llm_subquotes_and_newlines(self, input_text: str) -> None:
+        output = {
+            "summary": (
+                'An excerpt with "quoted stuff" or "maybe more." More stuff (with parenthesis).'
+            ),
+            "relevance_score": 8,
+        }
+        assert llm_parse_json(input_text) == output
+
+
+def test_maybe_get_date():
+    assert maybe_get_date("2023-01-01") == datetime(2023, 1, 1)
+    assert maybe_get_date("2023-01-31 14:30:00") == datetime(2023, 1, 31, 14, 30)
+    assert maybe_get_date(datetime(2023, 1, 1)) == datetime(2023, 1, 1)
+    assert maybe_get_date("foo") is None
+    assert maybe_get_date("") is None
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "cleaned_text"),
+    [
+        ("name", "name"),
+        (" name", " name"),
+        ("name ", "name "),
+        (" ", " "),
+        ("Bates name", "Bates name"),
+        ("Bate's name", "Bates name"),
+        ("Bate's name Bate's name", "Bates name Bates name"),
+        ("Bates' name", "Bates name"),
+        ("X's Y", "Xs Y"),
+        ("' name", "name"),
+        (" ' name", " name"),
+        ("name ' name", "name name"),
+        ("'s name", "name"),
+        (" 's name", " name"),
+        ("s' name", "s name"),
+        ("S' name", "S name"),
+        ("Bates 's name", "Bates name"),
+    ],
+)
+def test_clean_possessives(raw_text: str, cleaned_text: str) -> None:
+    assert clean_possessives(raw_text) == cleaned_text
+
+
+tricky_test = (
+    "simple (pqac-a020507f) quote"
+    "TEST AND (easy OR mistaken OR not_context)"
+    " and another AND not context yes, end. (pqac-a020507f, pqac-4552861e)"
+    " duplicates ()"
+)
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "cleaned_text"),
+    [
+        ("simple (pqac-a020507f) quote", "simple (text1) quote"),
+        (
+            "compound (pqac-a020507f) quote (pqac-a020507f, pqac-4552861e)",
+            "compound (text1) quote (text1, text2)",
+        ),
+        (
+            "already replaced (pqac-a020507f, pqac-4552861e) quote (pqac-a020507f, pqac-4552861e)",
+            "already replaced (text1, text2) quote (text1, text2)",
+        ),
+        (
+            "back (pqac-4552861e, pqac-a020507f) and forth (pqac-a020507f, pqac-4552861e)",
+            "back (text2, text1) and forth (text1, text2)",
+        ),
+        (
+            "distractor (easy OR mistaken OR not_context) quote (pqac-a020507f, pqac-4552861e)",
+            "distractor (easy OR mistaken OR not_context) quote (text1, text2)",
+        ),
+        ("duplicates (pqac-a020507f, pqac-4552861f)", "duplicates (text1)"),
+        (
+            "compound duplicates (pqac-a020507f, pqac-4552861f, pqac-4552861e)",
+            "compound duplicates (text1, text2)",
+        ),
+        (
+            "triples (pqac-a020507f, pqac-4552861e, pqac-d0a08f29) with single (pqac-d0a08f29)",
+            "triples (text1, text2, text3) with single (text3)",
+        ),
+        (
+            "triples hallucinated (pqac-a020507f, pqac-1234567e, pqac-d0a08f29) with single (pqac-d0a08f29)",
+            "triples hallucinated (text1, text3) with single (text3)",
+        ),
+        ("with and (pqac-a020507f and pqac-4552861e)", "with and (text1, text2)"),
+        ("extra stuff (pqac-4552861e, odd-unseen thing)", "extra stuff (text2)"),
+        (
+            "nested (parenthetical(pqac-4552861e, odd-unseen thing))",
+            "nested (parenthetical(text2))",
+        ),
+        (
+            "dupe text name (pqac-d0a08f29, pqac-387deef6) xyz (pqac-387deef6)",
+            "dupe text name (text3) xyz (text3)",
+        ),
+    ],
+)
+def test_pqa_context_id_parsing(raw_text: str, cleaned_text: str) -> None:
+    session = PQASession(
+        id=uuid4(),
+        question="test",
+        raw_answer=raw_text,
+        contexts=[
+            Context(
+                id="pqac-a020507f",
+                context="blah blah",
+                text=Text(
+                    name="text1",
+                    text="blah blah",
+                    doc=Doc(
+                        docname="test_doc1",
+                        citation="Test Doc1, 2025",
+                        dockey="key1",
+                    ),
+                ),
+            ),
+            Context(
+                id="pqac-4552861e",
+                context="quote",
+                text=Text(
+                    name="text2",
+                    text="quote",
+                    doc=Doc(
+                        docname="test_doc2",
+                        citation="Test Doc2, 2025",
+                        dockey="key2",
+                    ),
+                ),
+            ),
+            Context(
+                id="pqac-d0a08f29",
+                context="quote",
+                text=Text(
+                    name="text3",
+                    text="quote",
+                    doc=Doc(
+                        docname="test_doc3",
+                        citation="Test Doc3, 2025",
+                        dockey="key3",
+                    ),
+                ),
+            ),
+            Context(
+                id="pqac-387deef6",
+                context="quote",
+                text=Text(
+                    name="text3",
+                    text="quote",
+                    doc=Doc(
+                        docname="test_doc3",
+                        citation="Test Doc3, 2025",
+                        dockey="key3",
+                    ),
+                ),
+            ),
+        ],
+    )
+    session.populate_formatted_answers_and_bib_from_raw_answer()
+    assert session.answer == cleaned_text
+    assert (
+        session.formatted_answer == session.formatted_answer.strip()
+    ), "Expecting no leading/trailing whitespace"
+
+
+@pytest.mark.asyncio
+async def test_timeout_resilience() -> None:
+    model_name = CommonLLMNames.ANTHROPIC_TEST.value
+    short_timeout = 0.001
+    llm = LiteLLMModel(
+        name=CommonLLMNames.ANTHROPIC_TEST.value,
+        config={
+            "model_list": [
+                {
+                    "model_name": model_name,
+                    "litellm_params": {
+                        "model": model_name,
+                        "timeout": short_timeout,
+                    },
+                }
+            ],
+            "router_kwargs": {"timeout": short_timeout},
+        },
+    )
+
+    # Make sure we've configured timeout low enough for this test to be useful
+    with pytest.raises(litellm.Timeout):
+        await llm.call_single("The duck says")
+
+    text = Text(
+        text="The duck says",
+        name="test",
+        doc=Doc(docname="test", dockey="test", citation="test"),
+    )
+    kw = {
+        "text": text,
+        "question": "The duck says",
+        "summary_llm_model": llm,
+        "prompt_templates": ("", ""),
+    }
+    # This *should* raise
+    with pytest.raises(LLMContextTimeoutError):
+        await _map_fxn_summary(**kw)  # type: ignore[arg-type]
+
+    # The wrapped version should not raise, but return empty
+    context, llm_results = await map_fxn_summary(**kw)
+    assert context is None
+    assert not llm_results
+
+
+TEST_STUB_LAMBDA = lambda: 1  # noqa: E731
+
+
+TEST_STUB_PARTIAL = partial(pymupdf_parse_pdf_to_pages, kwarg=2)
+
+
+def test_parse_pdf_string_resolution() -> None:
+    # Test with a valid string FQN
+    pymupdf_str = Settings(
+        parsing=ParsingSettings(parse_pdf="paperqa_pymupdf.parse_pdf_to_pages")
+    )
+    assert pymupdf_str.parsing.parse_pdf == pymupdf_parse_pdf_to_pages
+    assert (
+        pymupdf_str.model_dump(mode="json")["parsing"]["parse_pdf"]
+        == "paperqa_pymupdf.reader.parse_pdf_to_pages"
+    )
+    assert "parse_pdf" not in pymupdf_str.model_dump()["parsing"]
+
+    # Test another valid string FQN
+    pypdf_str = Settings(
+        parsing=ParsingSettings(parse_pdf="paperqa_pypdf.parse_pdf_to_pages")
+    )
+    assert pypdf_str.parsing.parse_pdf == pypdf_parse_pdf_to_pages
+    assert (
+        pypdf_str.model_dump(mode="json")["parsing"]["parse_pdf"]
+        == "paperqa_pypdf.reader.parse_pdf_to_pages"
+    )
+    assert "parse_pdf" not in pypdf_str.model_dump()["parsing"]
+
+    # Test directly passing a normal parser
+    pymupdf_fn = Settings(parsing=ParsingSettings(parse_pdf=pymupdf_parse_pdf_to_pages))
+    assert pymupdf_fn.parsing.parse_pdf == pymupdf_parse_pdf_to_pages
+    assert (
+        pymupdf_fn.model_dump(mode="json")["parsing"]["parse_pdf"]
+        == "paperqa_pymupdf.reader.parse_pdf_to_pages"
+    )
+    assert "parse_pdf" not in pymupdf_fn.model_dump()["parsing"]
+
+    # Test directly passing a lambda parser
+    lambda_fn = Settings(parsing=ParsingSettings(parse_pdf=TEST_STUB_LAMBDA))
+    assert lambda_fn.parsing.parse_pdf == TEST_STUB_LAMBDA
+    assert "parse_pdf" not in lambda_fn.model_dump(mode="json")["parsing"]
+    assert "parse_pdf" not in lambda_fn.model_dump()["parsing"]
+
+    # Test directly passing a functools partial parser
+    partial_fn = Settings(parsing=ParsingSettings(parse_pdf=TEST_STUB_PARTIAL))
+    assert partial_fn.parsing.parse_pdf == TEST_STUB_PARTIAL
+    assert "parse_pdf" not in partial_fn.model_dump(mode="json")["parsing"]
+    assert "parse_pdf" not in partial_fn.model_dump()["parsing"]
+
+    # Test a nonexistent FQN
+    with pytest.raises(ValueError, match="Failed to locate"):
+        Settings(parsing=ParsingSettings(parse_pdf="nonexistent.module.function"))
+
+    # Test a valid FQN that is not a parser
+    with pytest.raises(TypeError, match="not a PDF parser"):
+        Settings(parsing=ParsingSettings(parse_pdf="os.path.sep"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("multimodal", [False, True])
+async def test_reader_config_propagation(stub_data_dir: Path, multimodal: bool) -> None:
+    settings = Settings(
+        parsing=ParsingSettings(
+            reader_config={"chunk_chars": 2000, "overlap": 50, "dpi": 144},
+            multimodal=multimodal,
+        )
+    )
+
+    docs = Docs()
+    with (
+        patch(
+            "paperqa.docs.read_doc", side_effect=RuntimeError("sentinel")
+        ) as mock_read_doc,
+        pytest.raises(RuntimeError, match="sentinel"),
+    ):
+        await docs.aadd(
+            stub_data_dir / "paper.pdf",
+            citation="Wellawatte et al, XAI Review, 2023",  # Skip citation inference
+            doi="10.1021/acs.jctc.2c01235",  # Skip DOI inference
+            title="A Perspective on Explanations of Molecular Prediction Models",  # Skip title inference
+            settings=settings,
+        )
+    mock_read_doc.assert_awaited_once()
+    assert mock_read_doc.call_args.kwargs["chunk_chars"] == 2000
+    assert mock_read_doc.call_args.kwargs["overlap"] == 50
+    assert mock_read_doc.call_args.kwargs["parse_media"] == multimodal
+    assert mock_read_doc.call_args.kwargs["dpi"] == 144
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("filename", "query"),
+    [
+        ("dummy.docx", "What is the RAG system?"),
+        ("dummy_jap.docx", "What is the RAG system?"),
+        ("dummy.pptx", "What is the RAG system?"),
+        ("dummy.xlsx", "What is the price of a laptop?"),
+    ],
+)
+async def test_parse_office_doc(stub_data_dir: Path, filename: str, query: str) -> None:
+    docs = Docs()
+
+    settings = Settings(
+        llm="gemini/gemini-2.5-flash",
+        embedding="gemini/gemini-embedding-001",
+        summary_llm="gemini/gemini-2.5-flash",
+        agent={"agent_llm": "gemini/gemini-2.5-flash"},
+        parsing=ParsingSettings(use_doc_details=False),
+    )
+    docname = await docs.aadd(
+        stub_data_dir / filename,
+        citation="dummy citation",
+        docname=filename,
+        settings=settings,
+    )
+    assert docname is not None
+    assert docs.texts
+    session = await docs.aquery(query, settings=settings)
+    assert session.used_contexts
+    assert len(session.answer) > 10, "Expected an answer"
+    assert CANNOT_ANSWER_PHRASE not in session.answer, "Expected the system to be sure"
+
+
+def test_text_comparison() -> None:
+    doc = Doc(docname="test", citation="test", dockey="test")
+    media1 = ParsedMedia(index=0, data=b"image_data_1")
+    media2 = ParsedMedia(index=1, data=b"image_data_2")
+
+    # Test equality and hashing without media
+    text_no_media1 = Text(text="Hello", name="chunk1", doc=doc)
+    text_no_media2 = Text(text="Hello", name="chunk1", doc=doc)
+    assert text_no_media1 == text_no_media2
+    assert hash(text_no_media1) == hash(text_no_media2)
+
+    # Test equality and hashing with media
+    # First with same media
+    text_with_media1 = Text(text="Hello", name="chunk1", doc=doc, media=[media1])
+    text_with_media2 = Text(text="Hello", name="chunk1", doc=doc, media=[media1])
+    assert text_with_media1 == text_with_media2
+    assert hash(text_with_media1) == hash(text_with_media2)
+    # Next with different media
+    text_diff_media = Text(text="Hello", name="chunk1", doc=doc, media=[media2])
+    assert text_with_media1 != text_diff_media
+    assert hash(text_with_media1) != hash(text_diff_media)
+
+    # Test that media matters for equality and set storage
+    assert text_with_media1 != text_no_media1
+    assert hash(text_with_media1) != hash(text_no_media1)
+    assert len({text_with_media1, text_with_media2, text_diff_media}) == 2
+
+    # Test with Pydantic extras
+    text_with_extra1 = Text(text="Hello", name="chunk1", doc=doc, custom_field="value1")
+    assert (
+        text_with_extra1 != text_no_media1
+    ), "Presence of an extra should not be equal"
+    assert hash(text_with_extra1) != hash(text_no_media1)
+    text_with_extra2 = Text(text="Hello", name="chunk1", doc=doc, custom_field="value1")
+    assert text_with_extra1 == text_with_extra2
+    assert hash(text_with_extra1) == hash(text_with_extra2)
+    text_with_extra_diff = Text(
+        text="Hello", name="chunk1", doc=doc, custom_field="value2"
+    )
+    assert (
+        text_with_extra1 != text_with_extra_diff
+    ), "Different extra values should not be equal"
+    assert hash(text_with_extra1) != hash(text_with_extra_diff)
+    text_with_extra_other = Text(
+        text="Hello", name="chunk1", doc=doc, other_custom_field="value1"
+    )
+    assert (
+        text_with_extra1 != text_with_extra_other
+    ), "Different extra keys should not be equal"
+    assert hash(text_with_extra1) != hash(text_with_extra_other)
+    text_with_unhashable_extra = Text(
+        text="Hello", name="chunk1", doc=doc, unhashable_field=["a", "list"]
+    )
+    with pytest.raises(NotImplementedError, match="unhashable extras"):
+        hash(text_with_unhashable_extra)
+
+
+def test_context_comparison() -> None:
+    text1 = Text(
+        name="text1",
+        text="Sample text content",
+        doc=Doc(docname="test_doc", citation="Test Doc, 2025", dockey="key1"),
+    )
+    text2 = Text(
+        name="text2",
+        text="Different text content",
+        doc=Doc(docname="other_doc", citation="Other Doc, 2025", dockey="key2"),
+    )
+
+    # Identical contexts should be equal
+    context_base = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+    )
+    context_none_question = Context(
+        context="This is a test context", question=None, text=text1, score=5
+    )
+
+    context_base_identical = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+    )
+    assert context_base == context_base_identical, "Identical contexts should be equal"
+    assert hash(context_base) == hash(
+        context_base_identical
+    ), "Identical contexts should have same hash"
+    context_none_question_identical = Context(
+        context="This is a test context", question=None, text=text1, score=5
+    )
+    assert (
+        context_none_question == context_none_question_identical
+    ), "Identical contexts should be equal"
+    assert hash(context_none_question) == hash(
+        context_none_question_identical
+    ), "Identical contexts should have same hash"
+
+    # Different context text should make contexts unequal
+    context_diff_context = Context(
+        context="Different context text",
+        question="What is the test?",
+        text=text1,
+        score=5,
+    )
+    assert (
+        context_base != context_diff_context
+    ), "Different context text should make contexts unequal"
+    assert hash(context_base) != hash(
+        context_diff_context
+    ), "Different context text should have different hashes"
+
+    # Different questions should make contexts unequal
+    context_diff_question = Context(
+        context="This is a test context",
+        question="Different question?",
+        text=text1,
+        score=5,
+    )
+    assert (
+        context_base != context_diff_question
+    ), "Different questions should make contexts unequal"
+    assert hash(context_base) != hash(
+        context_diff_question
+    ), "Different questions should have different hashes"
+
+    assert (
+        context_base != context_none_question
+    ), "Different questions should make contexts unequal"
+
+    # Different text objects should make contexts unequal
+    context_diff_text = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text2,
+        score=5,
+    )
+    assert (
+        context_base != context_diff_text
+    ), "Different text objects should make contexts unequal"
+    assert hash(context_base) != hash(
+        context_diff_text
+    ), "Different text objects should have different hashes"
+
+    # Different scores should make contexts unequal
+    context_diff_score = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=3,
+    )
+    assert (
+        context_base != context_diff_score
+    ), "Different scores should make contexts unequal"
+    assert hash(context_base) != hash(
+        context_diff_score
+    ), "Different scores should have different hashes"
+
+    # Different IDs should make contexts unequal
+    context_diff_id = Context(
+        id="custom-id-1",
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+    )
+    assert context_base != context_diff_id, "Different IDs should make contexts unequal"
+    assert hash(context_base) != hash(
+        context_diff_id
+    ), "Different IDs should have different hashes"
+
+    assert (
+        context_base != "This is a test context"
+    ), "Different types should make contexts unequal"
+
+    # Identical contexts with extras should be equal
+    context_with_extras = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+        author_name="John Doe",
+        custom_field="value",
+    )
+    context_with_extras_identical = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+        author_name="John Doe",
+        custom_field="value",
+    )
+    assert (
+        context_with_extras == context_with_extras_identical
+    ), "Contexts with identical extras should be equal"
+    assert hash(context_with_extras) == hash(
+        context_with_extras_identical
+    ), "Contexts with identical extras should have same hash"
+
+    # Extras should make contexts unequal
+    assert context_base != context_with_extras, "Extras should make contexts unequal"
+    assert hash(context_base) != hash(
+        context_with_extras
+    ), "Extras should have different hashes"
+
+    # Different extra values should make contexts unequal
+    context_diff_extras = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+        author_name="Jane Smith",
+        custom_field="value",
+    )
+    assert (
+        context_with_extras != context_diff_extras
+    ), "Contexts with different extra values should be unequal"
+    assert hash(context_with_extras) != hash(
+        context_diff_extras
+    ), "Contexts with different extra values should have different hashes"
+
+    # Different extras should make contexts unequal
+    context_diff_extra_fields = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+        author_name="John Doe",
+        different_field="value",
+    )
+    assert (
+        context_with_extras != context_diff_extra_fields
+    ), "Contexts with different extras should be unequal"
+    assert hash(context_with_extras) != hash(
+        context_diff_extra_fields
+    ), "Contexts with different extras should have different hashes"
+
+    # Identical contexts with different ordered extras should be equal
+    context_reordered_extras = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+        custom_field="value",
+        author_name="John Doe",  # Reversed order from context_with_extras
+    )
+    assert (
+        context_with_extras == context_reordered_extras
+    ), "Contexts with extras in different order should be equal"
+    assert hash(context_with_extras) == hash(
+        context_reordered_extras
+    ), "Contexts with extras in different order should have same hash"
+
+    context_with_list_extras = Context(
+        context="This is a test context",
+        question="What is the test?",
+        text=text1,
+        score=5,
+        tags=["tag1", "tag2"],
+    )
+    assert (
+        context_base != context_with_list_extras
+    ), "Different context text should make contexts unequal"
+    assert hash(context_base) == hash(context_with_list_extras), (
+        "Since we discard extras that aren't hashable,"
+        "these should receive the same hash"
+    )
+    assert (
+        context_with_extras != context_with_list_extras
+    ), "Contexts with different extras should be unequal"
+    assert hash(context_with_extras) != hash(
+        context_with_list_extras
+    ), "Contexts with different extras should have different hashes"

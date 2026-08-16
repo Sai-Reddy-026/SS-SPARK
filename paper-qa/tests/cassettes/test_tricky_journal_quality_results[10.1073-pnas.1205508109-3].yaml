@@ -1,0 +1,152 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1073%2Fpnas.1205508109?mailto=example%40papercrow.ai
+    response:
+      body:
+        string: !!binary |
+          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
+          2zfY73+1pt5JrR8AAA==
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "2578"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:28 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1073%2Fpnas.1205508109/transform/application/x-bibtex
+    response:
+      body:
+        string:
+          " @article{Burke_2012, title={Oncogenic mutations mimic and enhance
+          dynamic events in the natural activation of phosphoinositide 3-kinase p110\u03B1
+          (\n            PIK3CA\n            )}, volume={109}, ISSN={1091-6490}, url={http://dx.doi.org/10.1073/pnas.1205508109},
+          DOI={10.1073/pnas.1205508109}, number={38}, journal={Proceedings of the National
+          Academy of Sciences}, publisher={Proceedings of the National Academy of Sciences},
+          author={Burke, John E. and Perisic, Olga and Masson, Glenn R. and Vadas, Oscar
+          and Williams, Roger L.}, year={2012}, month=sep, pages={15259\u201315264}
+          }\n"
+      headers:
+        Connection:
+          - keep-alive
+        Date:
+          - Mon, 11 Aug 2025 23:07:28 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+version: 1

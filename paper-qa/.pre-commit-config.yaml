@@ -1,0 +1,100 @@
+default_language_version:
+  python: python3
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        exclude: |
+          (?x)^(
+            packages/paper-qa-nemotron/tests/cassettes.*|
+            src/paperqa/clients/client_data.*|
+            tests/stub_data.*|
+            tests/cassettes.*|
+            uv\.lock
+          )$
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: fix-byte-order-marker
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.4
+    hooks:
+      - id: ruff-check
+        args: [--fix, --exit-non-zero-on-fix]
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 26.1.0
+    hooks:
+      - id: black-jupyter
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.6.2
+    hooks:
+      - id: prettier
+        exclude: ^docs/.*\.md$
+  - repo: https://github.com/pappasam/toml-sort
+    rev: v0.24.3
+    hooks:
+      - id: toml-sort-fix
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        additional_dependencies: [".[toml]"]
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.39.0
+    hooks:
+      - id: typos
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 3.0.0
+    hooks:
+      - id: check-mailmap
+  - repo: https://github.com/henryiii/validate-pyproject-schema-store
+    rev: 2025.11.04
+    hooks:
+      - id: validate-pyproject
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.9.8
+    hooks:
+      - id: uv-lock
+  - repo: https://github.com/adamchainz/blacken-docs
+    rev: 1.20.0
+    hooks:
+      - id: blacken-docs
+        exclude: \.md$ # The generated markdown files are being blackened by jupytext
+  - repo: https://github.com/srstevenson/nb-clean
+    rev: 4.0.1
+    hooks:
+      - id: nb-clean
+        args: [--preserve-cell-outputs, --remove-empty-cells]
+  - repo: https://github.com/jackdewinter/pymarkdown
+    rev: v0.9.33
+    hooks:
+      - id: pymarkdown
+        exclude: docs/tutorials/
+  - repo: https://github.com/mwouts/jupytext
+    rev: v1.18.1
+    hooks:
+      - id: jupytext
+        # SEE: https://github.com/mwouts/jupytext/issues/1467
+        args: [--to, md, --pipe-fmt, ipynb, --pipe, "black {}"]
+        additional_dependencies: [black]
+        files: ^docs/.*\.ipynb$
+  - repo: https://github.com/jsh9/markdown-toc-creator
+    rev: 0.1.3
+    hooks:
+      - id: markdown-toc-creator
+  - repo: local # Use local so we can inspect paperqa.version
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run --frozen mypy # Use --frozen to avoid mutating local venv
+        language: system
+        types_or: [python, pyi]

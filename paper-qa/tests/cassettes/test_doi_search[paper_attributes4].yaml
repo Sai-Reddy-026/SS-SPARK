@@ -1,0 +1,462 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1073/pnas.1414271111?fields=authors%2CcitationCount%2CcitationStyles%2CexternalIds%2CinfluentialCitationCount%2CisOpenAccess%2Cjournal%2CopenAccessPdf%2CpublicationDate%2CpublicationTypes%2Ctitle%2Curl%2Cvenue%2Cyear
+    response:
+      body:
+        string:
+          '{"paperId": "db3720c812a462ef955d5654b65ca9189d4b8372", "externalIds":
+          {"MAG": "2109415576", "DOI": "10.1073/pnas.1414271111", "CorpusId": 10888161,
+          "PubMed": "25349395"}, "url": "https://www.semanticscholar.org/paper/db3720c812a462ef955d5654b65ca9189d4b8372",
+          "title": "Developing functional musculoskeletal tissues through hypoxia and
+          lysyl oxidase-induced collagen cross-linking", "venue": "Proceedings of the
+          National Academy of Sciences of the United States of America", "year": 2014,
+          "citationCount": 136, "influentialCitationCount": 4, "isOpenAccess": true,
+          "openAccessPdf": {"url": "https://www.pnas.org/content/pnas/111/45/E4832.full.pdf",
+          "status": "BRONZE", "license": null}, "publicationTypes": ["JournalArticle"],
+          "publicationDate": "2014-10-27", "journal": {"name": "Proceedings of the National
+          Academy of Sciences", "pages": "E4832 - E4841", "volume": "111"}, "citationStyles":
+          {"bibtex": "@Article{Makris2014DevelopingFM,\n author = {Eleftherios Makris
+          and D. Responte and N. Paschos and Jerry C. Hu and Kyriacos, \u039a\u03c5\u03c1\u03b9\u03ac\u03ba\u03bf\u03c2,
+          Athanasiou, \u0391\u03b8\u03b1\u03bd\u03b1\u03c3\u03af\u03bf\u03c5},\n booktitle
+          = {Proceedings of the National Academy of Sciences of the United States of
+          America},\n journal = {Proceedings of the National Academy of Sciences},\n
+          pages = {E4832 - E4841},\n title = {Developing functional musculoskeletal
+          tissues through hypoxia and lysyl oxidase-induced collagen cross-linking},\n
+          volume = {111},\n year = {2014}\n}\n"}, "authors": [{"authorId": "50040319",
+          "name": "Eleftherios Makris"}, {"authorId": "5165779", "name": "D. Responte"},
+          {"authorId": "3776061", "name": "N. Paschos"}, {"authorId": "32210454", "name":
+          "Jerry C. Hu"}, {"authorId": "2541052", "name": "Kyriacos, \u039a\u03c5\u03c1\u03b9\u03ac\u03ba\u03bf\u03c2,
+          Athanasiou, \u0391\u03b8\u03b1\u03bd\u03b1\u03c3\u03af\u03bf\u03c5"}]}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "1878"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        Via:
+          - 1.1 b0797f10be715dcb685d992d17347df4.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - xrRimOsbzDP7C6jxHu1sccEtOvUpeRb5XcvawOZjAh7b-5SWcy6Cew==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - PKei-GAxvHcErAg=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "1878"
+        x-amzn-Remapped-Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - 90588ce6-0596-4718-872c-a2243f3797fa
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.unpaywall.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.unpaywall.org/v2/10.1073/pnas.1414271111?email=example@papercrow.ai
+    response:
+      body:
+        string: !!binary |
+          H4sIAKx3mmgA/+1W32/bNhB+319B8FmWJVmOE79lSYCiRdtg3fawIhDO5MliQ5MCSTlVi/7vO0r2
+          YrfJsA7t2gH1k3U/v/vuSN57Lq3iS55naZ4tZtPWgE/zMi+LRU4/nkR91TlNNk0IrV9OpyRJrVtP
+          H/cJKmgkj0vcoratMmtWd0YEZQ1otum86LT1t6gx0HdQ3nfoWWic7dYNa/rWvlXAwEime99rRp8S
+          PE6UkZ1AyYTVGtZomHDW+4lW5pZyUGKSuZj4je0cpZqAC0oQlIQrX7XgIODbwJc1aI8Jb7uVVr5B
+          WUlSkFuR5eUkzybFgjx6BMeXUZTs41UGNtHu2lmBKCmnZ7Ym4MhewK66cwESN32UvxIKjUDP7wNQ
+          qcZThCwrFpPTsiiTPDvLJyflWfaRVaUPzY6UlYW/ajiQKlNJC28+Kc/9K8S7NMF1FMpC5QOELkJf
+          OWveRUob8JXD1noVrOsrYdt+b79CH8i90lYMWfjyPT8eoru7u3QYnDhJwpqAJgyTNKURmpbz6VV5
+          OivSutM6bWVN6ci/qq2r4teXiKNpvogPGos1ftZ041bJyBI5SWwdUokoSa6VQONJbChZwrfo/FD6
+          /Zz9vhMRd5YICn2LB2o3sh652/PYbppKyX1ENLK1yoQD0QH/yng6d91I96ilDjw02V0rB8hH+D8k
+          vFbuR9v+f207aBidz9c/Wvbdt+ywRf+IiKOOjBn/htyvw63vVhsVwmPc3vNzSO7+KdqxSzypJXVh
+          g5KyBAc6NapJ13a7LItZOV+c8Y/I5xKgXiwQhJifIopZvlrxx7vBr7vVc9oQLsbo/DM7c3N8mirc
+          rMCtbbR7TTpyGR5CI8GRqEj4uwq60Fg3HrzxfzVAG+EMV2rEC3c7y/0OcaWxpmfYKevZecqew61T
+          u3dXWOfQt3Zo7H5Ahwh1rbQasBEMF19zyktrFq02YUMlD487/KwsEawEve1XZq0MYjSN+xS/icP3
+          KUyQUo3bwINYL6NGsqcp+2XAFfBBoLtmf0ukL9St1UCUPkvZNXhBE/q9Qn2KzvXsImVPum8GUcMj
+          0/msdwrEOJrnoQG6PpT9D3Am/KUjHG1Us1edW6PrE/abUcM9FIYl9QK0opvPKEjYJWyVT9jFOTub
+          n+QnVOfN4dkusmI+yRaTWfZrXi6LGa3zf/APP/0J4SrGgvYMAAA=
+      headers:
+        Access-Control-Allow-Headers:
+          - origin, content-type, accept, x-requested-with
+        Access-Control-Allow-Methods:
+          - POST, GET, OPTIONS, PUT, DELETE, PATCH
+        Access-Control-Allow-Origin:
+          - "*"
+        Content-Encoding:
+          - gzip
+        Content-Length:
+          - "893"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        Nel:
+          - '{"report_to":"heroku-nel","response_headers":["Via"],"max_age":3600,"success_fraction":0.01,"failure_fraction":0.1}'
+        Report-To:
+          - '{"group":"heroku-nel","endpoints":[{"url":"https://nel.heroku.com/reports?s=8LYgfJX%2BG3oiVIkwP9OvW4M5fq%2BaGRoiaE0IylRExOA%3D\u0026sid=c46efe9b-d3d2-4a0c-8c76-bfafa16c5add\u0026ts=1754953644"}],"max_age":3600}'
+        Reporting-Endpoints:
+          - heroku-nel="https://nel.heroku.com/reports?s=8LYgfJX%2BG3oiVIkwP9OvW4M5fq%2BaGRoiaE0IylRExOA%3D&sid=c46efe9b-d3d2-4a0c-8c76-bfafa16c5add&ts=1754953644"
+        Server:
+          - Heroku
+        Vary:
+          - Accept-Encoding
+        Via:
+          - 1.1 heroku-router
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.openalex.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.openalex.org/works/https://doi.org/10.1073%2Fpnas.1414271111
+    response:
+      body:
+        string: !!binary |
+          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
+          1FcAAA==
+      headers:
+        Access-Control-Allow-Credentials:
+          - "true"
+        Access-Control-Allow-Headers:
+          - Origin, X-Requested-With, Content-Type, Accept, Accept-Encoding, Authorization,
+            Cache-Control
+        Access-Control-Allow-Methods:
+          - POST, GET, OPTIONS, PUT, DELETE, PATCH
+        Access-Control-Allow-Origin:
+          - "*"
+        Access-Control-Expose-Headers:
+          - Authorization, Cache-Control
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Length:
+          - "4564"
+        Content-Security-Policy:
+          - default-src 'self'; object-src 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        Nel:
+          - '{"report_to":"heroku-nel","max_age":3600,"success_fraction":0.005,"failure_fraction":0.05,"response_headers":["Via"]}'
+        Referrer-Policy:
+          - strict-origin-when-cross-origin
+        Report-To:
+          - '{"group":"heroku-nel","max_age":3600,"endpoints":[{"url":"https://nel.heroku.com/reports?ts=1754953644&sid=1b10b0ff-8a76-4548-befa-353fc6c6c045&s=nBO0V%2BFanUZuG2cxQUBusac7lo7PJOTX87p%2Fhg4edAo%3D"}]}'
+        Reporting-Endpoints:
+          - heroku-nel=https://nel.heroku.com/reports?ts=1754953644&sid=1b10b0ff-8a76-4548-befa-353fc6c6c045&s=nBO0V%2BFanUZuG2cxQUBusac7lo7PJOTX87p%2Fhg4edAo%3D
+        Server:
+          - gunicorn
+        Strict-Transport-Security:
+          - max-age=31556926; includeSubDomains
+        Vary:
+          - Accept-Encoding
+        Via:
+          - 1.1 vegur
+        X-Api-Pool:
+          - common
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-Xss-Protection:
+          - 1; mode=block
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1073%2Fpnas.1414271111?mailto=example%40papercrow.ai
+    response:
+      body:
+        string: !!binary |
+          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
+          N1jwfwELpZ7Qdi8AAA==
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "3604"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1073%2Fpnas.1414271111/transform/application/x-bibtex
+    response:
+      body:
+        string:
+          " @article{Makris_2014, title={Developing functional musculoskeletal
+          tissues through hypoxia and lysyl oxidase-induced collagen cross-linking},
+          volume={111}, ISSN={1091-6490}, url={http://dx.doi.org/10.1073/pnas.1414271111},
+          DOI={10.1073/pnas.1414271111}, number={45}, journal={Proceedings of the National
+          Academy of Sciences}, publisher={Proceedings of the National Academy of Sciences},
+          author={Makris, Eleftherios A. and Responte, Donald J. and Paschos, Nikolaos
+          K. and Hu, Jerry C. and Athanasiou, Kyriacos A.}, year={2014}, month=oct }
+
+          "
+      headers:
+        Connection:
+          - keep-alive
+        Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+version: 1

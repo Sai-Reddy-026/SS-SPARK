@@ -1,0 +1,71 @@
+# ============================================================
+# SS SPARK Backend — Production Requirements
+# ============================================================
+
+# ── Web Framework ────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# ── Configuration ────────────────────────────────────────────
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+
+# ── PaperQA (installed separately or via requirements) ───────
+anyio
+html2text
+httpx
+numpy
+rich
+tenacity
+tiktoken>=0.4.0
+
+# ── LLM API Clients (LiteLLM used internally) ────────────────
+litellm>=1.0.0
+openai>=1.30.0
+google-generativeai>=0.7.0
+anthropic>=0.28.0
+
+# ── Vector Database ──────────────────────────────────────────
+qdrant-client>=1.9.0
+chromadb>=0.5.0
+
+# ── PDF / Document Extraction ────────────────────────────────
+pymupdf>=1.24.0
+python-docx>=1.1.0
+
+# ── Image OCR ────────────────────────────────────────────────
+pillow>=10.3.0
+pytesseract>=0.3.13
+# NOTE: Tesseract binary must be installed separately:
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#   Linux:   sudo apt-get install tesseract-ocr
+#   macOS:   brew install tesseract
+
+# ── Database ─────────────────────────────────────────────────
+motor>=3.4.0
+pymongo>=4.7.0
+
+# ── Utilities ────────────────────────────────────────────────
+aiofiles>=23.2.1
+httpx>=0.27.0
+
+# ── Authentication ───────────────────────────────────────────
+# NOTE: passlib 1.7.4 is INCOMPATIBLE with bcrypt 4+/5+ (API change broke
+# version detection). We call bcrypt directly in core/auth.py with SHA-256
+# pre-hashing. Do NOT re-add passlib[bcrypt].
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.0.0
+
+# ── Async Email ───────────────────────────────────────────────
+aiosmtplib>=3.0.0
+
+# ── PPTX Support ─────────────────────────────────────────────
+python-pptx>=0.6.23
+
+# ── Streaming (Server-Sent Events) ───────────────────────────
+sse-starlette>=2.1.0
+
+# ── Hybrid Search ────────────────────────────────────────────
+rank-bm25>=0.2.2

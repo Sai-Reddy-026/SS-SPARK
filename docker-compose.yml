@@ -1,0 +1,52 @@
+services:
+  # ── SS SPARK Backend API ────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB_NAME=ss_spark
+      - USE_QDRANT=true
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-please-set-a-strong-random-secret-in-production-min-32-chars}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+      - ./backend/chroma_db:/app/backend/chroma_db
+    depends_on:
+      - mongodb
+      - qdrant
+    restart: unless-stopped
+
+  # ── MongoDB Database ────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # ── Qdrant Vector Store ─────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  mongo_data:
+  qdrant_data:

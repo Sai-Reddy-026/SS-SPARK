@@ -1,0 +1,342 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1007/s40278-023-41815-2?fields=authors%2CcitationCount%2CcitationStyles%2CexternalIds%2CinfluentialCitationCount%2CisOpenAccess%2Cjournal%2CopenAccessPdf%2CpublicationDate%2CpublicationTypes%2Ctitle%2Curl%2Cvenue%2Cyear
+    response:
+      body:
+        string:
+          '{"paperId": "e0d2719e49ad216f98ed640864cdacd1c20f53e6", "externalIds":
+          {"DOI": "10.1007/s40278-023-41815-2", "CorpusId": 259225376}, "url": "https://www.semanticscholar.org/paper/e0d2719e49ad216f98ed640864cdacd1c20f53e6",
+          "title": "Convalescent-anti-sars-cov-2-plasma/immune-globulin", "venue": "Reactions
+          weekly", "year": 2023, "citationCount": 0, "influentialCitationCount": 0,
+          "isOpenAccess": false, "openAccessPdf": {"url": "", "status": null, "license":
+          null}, "publicationTypes": ["JournalArticle"], "publicationDate": "2023-06-01",
+          "journal": {"name": "Reactions Weekly", "pages": "145 - 145", "volume": "1962"},
+          "citationStyles": {"bibtex": "@Article{None,\n booktitle = {Reactions weekly},\n
+          journal = {Reactions Weekly},\n pages = {145 - 145},\n title = {Convalescent-anti-sars-cov-2-plasma/immune-globulin},\n
+          volume = {1962},\n year = {2023}\n}\n"}, "authors": []}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "877"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Via:
+          - 1.1 2347835d64b95b688a16fb2618f2577a.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - bNMVoRKlF45whub5ZQ4-YBxs8mw8DYAKzJ8QbC1Iq6-EDycu0kp1Dw==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - PKeiqGqWvHcEffw=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "877"
+        x-amzn-Remapped-Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - 3a7b9d2a-d346-481d-be17-553a5cec5842
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.unpaywall.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.unpaywall.org/v2/10.1007/s40278-023-41815-2?email=example@papercrow.ai
+    response:
+      body:
+        string: !!binary |
+          H4sIAKp3mmgA/32SQU/cMBCF7/yKyOeY2CbL7uZYrvRSKiGBkDVrD1lTx448NuqC+t/rgIClrXp9
+          873npxk/MxsdG5gUp1KIdUe9UOsNF+qM93IjV1yxdkF0Sb5i+5xnGrquKqcxjd1/bdllj9V0EcMj
+          eCSDIXMI2XGCRNzER6747IEm6Nw0lYB89HFXvAvVPWJIi/shlhTAc0jZmZrXMkd6hgQZf2Y23IMn
+          bNlcdt7RHq22dVBtaukizrk6q44DQmLDIrVveTrAtHDfEEx2MVBzjfjDH9gH4YgCVURI2fPtdtW3
+          Uq63XImV/IPS/hj7NNQR3kseqS5oG+Hhr/61JruakwsjpubKOAwGGwi2+VLIBSRqvqJ10FxeXrxu
+          4ig+gqYMuSydjY+EtiJ7IJ1wjuRyTAdt4nx4N+yQcg3QPhpYdsCGULxv2b1L/x4cSfWR27vPisZp
+          B2mM9d2XWb3ES6NgIVVJtexJQ8n7mOgtsMzLuezrvVZc1I+jvsvN0KtBqRv26+Q3UuGsPKACAAA=
+      headers:
+        Access-Control-Allow-Headers:
+          - origin, content-type, accept, x-requested-with
+        Access-Control-Allow-Methods:
+          - POST, GET, OPTIONS, PUT, DELETE, PATCH
+        Access-Control-Allow-Origin:
+          - "*"
+        Content-Encoding:
+          - gzip
+        Content-Length:
+          - "398"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Nel:
+          - '{"report_to":"heroku-nel","response_headers":["Via"],"max_age":3600,"success_fraction":0.01,"failure_fraction":0.1}'
+        Report-To:
+          - '{"group":"heroku-nel","endpoints":[{"url":"https://nel.heroku.com/reports?s=0fQUj4u79VZaKOEm%2FDWxYU0NsO9QMZ%2BBagjVmE1BzAQ%3D\u0026sid=c46efe9b-d3d2-4a0c-8c76-bfafa16c5add\u0026ts=1754953642"}],"max_age":3600}'
+        Reporting-Endpoints:
+          - heroku-nel="https://nel.heroku.com/reports?s=0fQUj4u79VZaKOEm%2FDWxYU0NsO9QMZ%2BBagjVmE1BzAQ%3D&sid=c46efe9b-d3d2-4a0c-8c76-bfafa16c5add&ts=1754953642"
+        Server:
+          - Heroku
+        Vary:
+          - Accept-Encoding
+        Via:
+          - 1.1 heroku-router
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.openalex.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.openalex.org/works/https://doi.org/10.1007%2Fs40278-023-41815-2
+    response:
+      body:
+        string: !!binary |
+          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
+          FI4jcu2scevh5NuX7f5SoP7ql38Bs0NXB2sZAAA=
+      headers:
+        Access-Control-Allow-Credentials:
+          - "true"
+        Access-Control-Allow-Headers:
+          - Origin, X-Requested-With, Content-Type, Accept, Accept-Encoding, Authorization,
+            Cache-Control
+        Access-Control-Allow-Methods:
+          - POST, GET, OPTIONS, PUT, DELETE, PATCH
+        Access-Control-Allow-Origin:
+          - "*"
+        Access-Control-Expose-Headers:
+          - Authorization, Cache-Control
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Length:
+          - "1739"
+        Content-Security-Policy:
+          - default-src 'self'; object-src 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Nel:
+          - '{"report_to":"heroku-nel","max_age":3600,"success_fraction":0.005,"failure_fraction":0.05,"response_headers":["Via"]}'
+        Referrer-Policy:
+          - strict-origin-when-cross-origin
+        Report-To:
+          - '{"group":"heroku-nel","max_age":3600,"endpoints":[{"url":"https://nel.heroku.com/reports?ts=1754953642&sid=1b10b0ff-8a76-4548-befa-353fc6c6c045&s=YLTVXYqHZ2%2BDgcdzOdB07Dw1KAXkK8UoJXnq77RKnYA%3D"}]}'
+        Reporting-Endpoints:
+          - heroku-nel=https://nel.heroku.com/reports?ts=1754953642&sid=1b10b0ff-8a76-4548-befa-353fc6c6c045&s=YLTVXYqHZ2%2BDgcdzOdB07Dw1KAXkK8UoJXnq77RKnYA%3D
+        Server:
+          - gunicorn
+        Strict-Transport-Security:
+          - max-age=31556926; includeSubDomains
+        Vary:
+          - Accept-Encoding
+        Via:
+          - 1.1 vegur
+        X-Api-Pool:
+          - common
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-Xss-Protection:
+          - 1; mode=block
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1007%2Fs40278-023-41815-2?mailto=example%40papercrow.ai
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/8VW227jNhD9FULPpm6Rb3prnS4QINkFkrRFGwUFLY1txhQpkJQd1/C/d0j5tmnW
+          CBZoN3BgmTMazhzOOcNtYCyzrQnyQC2DXlCDMWwO1G4awLW10uerK9CGK4mGJIzD+GQJ8m3AZQWv
+          ULnHilmgDdMW4z49pXF61Rv00uz5udeZLK9ddGeg8YCm2WOc5ckQP39iTGfFrOomyJPBaNgfodsw
+          zoa7XqBhBhpkCbRUrbTo0Auadiq4WYDGiA+N5nIOmjyU3LkRJivyc2u4xDzJHVSckdvbCW7CjWld
+          Dgk+C16CNPjraevg0PY7a4hz/3mvhkE2it0f1lAqaUHaMzBtVeMrFQi2oVzSim1wz7gX/Hp/i9aF
+          tY3Ji6iI1ut1aPYVSjw1DWGp6iKaN0WkwQDTJcJgisjCq6VYOoayjNZc4ivBrvdjqlsp/X9U93za
+          u1I149KXuX96clatjKmZXlKMZjUvrc9vxoQBTNwslLbUhcA3QCMCVriWCO6BeVdDfgdYik2Asa6/
+          3LjeicMkjodFZLI4HY6oAytLRkmfpg6kjkIvqsVyBEWseYkRXSKAEF8gytU3j+HqMRnlWZqn4/eO
+          IesPs3F3DI0nZZBkfYr/6GswjdItTRwMyCPPAXokVEWnmwOpYhd6X/1EyRUTYEoHLJOWU8O0Qc8V
+          TWkjGCJaRLyuWwl0LtS0FYg3pt9gZP56Agm3WynR+nKS8SD12lFPPWvTsTMfeFxRJTEIXGzTcy3w
+          vF3CBiN59P+a3DtWV4pTZgxo64tDa3kqvZXYAm3pugwPIrgGMWeVop9c66GO/U3uegQsYSIkj+64
+          aiyfqBmZfPnt5pomY7LmdkHKM3BIBwbhkjTMovpY0zkt2lppJogHSVUIi9emDaHkcaEBXBQDZWv5
+          Cp+ZAeNVS8OKw9rtaRdABLegO1KQXyQWXkPFKnS9wR9lyZVhhvxB7jjWOOVKqDkq3QRh5CUjWVzI
+          nPTjIe0ngx75rEIydl8rgoimIflpxbhgUwFkplWdE2RmTgp5oqYBXpeh0vMiCr5q/mRQRC+hs0KI
+          sXAq4CceH9n4ASopzefcEeTghWuCyXnbdTBIL9By6U/5rWY4w1E0OrnYi0ARNdWsiC5QNESH4CQa
+          e7qypsFxwFyWPkTwbUnjbrnC5jp7x6m5k6czzf1AznttuJhuEc1aIVzwcGFr8e/MnamI3tj+u5x/
+          OM6G19i1mlvUrQWUy8MUqKBRhn+/wI7z9CpPRu8K7CgZjzqBNaXS4O8fOE322rpF1eM4YTbu8QMQ
+          XpofO7dHOz1S5xMgLF4YsOqKVOCmiAEnN1P8doJJ1OtmDpIYpxMeJTJTQqg1bok6MqPIcRCkNZCT
+          K680KDKNctg8H+bfGQn9Denyde5chc3Zleww8/aXrO1Xt62P6jyGx/gMW95dB1AcKa8cEh4hl/Fb
+          hFHwO426PJc13kS6Ftpi/JuHh88uapIMxzSN+0nQlS73jYqigxLfJX90OQ53EFBarVBlfevhgb3g
+          Qoffsc7LEO52/wBSOnixhAsAAA==
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "1159"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1007%2Fs40278-023-41815-2/transform/application/x-bibtex
+    response:
+      body:
+        string:
+          " @article{2023, volume={1962}, ISSN={1179-2051}, url={http://dx.doi.org/10.1007/s40278-023-41815-2},
+          DOI={10.1007/s40278-023-41815-2}, number={1}, journal={Reactions Weekly},
+          publisher={Springer Science and Business Media LLC}, year={2023}, month=jun,
+          pages={145\u2013145} }\n"
+      headers:
+        Connection:
+          - keep-alive
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+version: 1

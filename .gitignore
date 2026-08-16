@@ -1,0 +1,73 @@
+# ============================================================
+# SS SPARK — Production .gitignore
+# ============================================================
+
+# ── Environment & Secrets ───────────────────────────────────
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+
+# ── Node.js / Frontend ──────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+build/
+.output/
+.vinxi/
+.tanstack/
+.nitro/
+.wrangler/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Python / Backend ────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ── Uploads & Local Databases ───────────────────────────────
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/chroma_db/
+chroma_db/
+qdrant_data/
+mongo_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Logs & Debugging ─────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+
+# ── IDE & Editor Settings ───────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

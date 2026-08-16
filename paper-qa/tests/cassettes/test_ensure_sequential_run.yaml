@@ -1,0 +1,395 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.48550%2Farxiv.2312.07559?mailto=example%40papercrow.ai
+    response:
+      body:
+        string: Resource not found.
+      headers:
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/plain
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 404
+        message: Not Found
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/DOI:10.48550/arxiv.2312.07559?fields=externalIds%2Ctitle
+    response:
+      body:
+        string:
+          '{"paperId": "7e55d8701785818776323b4147cb13354c820469", "externalIds":
+          {"ArXiv": "2312.07559", "DBLP": "journals/corr/abs-2312-07559", "DOI": "10.48550/arXiv.2312.07559",
+          "CorpusId": 266191420}, "title": "PaperQA: Retrieval-Augmented Generative
+          Agent for Scientific Research"}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "277"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Via:
+          - 1.1 97354ec70bdda7ac06cc29aed9bfdb3c.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - x9CtPKv1V150lqYHGe6OC126K8s2LPDBKazjhAS2pycQf6_P_FOA-w==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - PKeiuGgZPHcEp5Q=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "277"
+        x-amzn-Remapped-Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - 07899b68-cb8e-47aa-abe2-09f2c18e3a6f
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.48550%2FarXiv.2312.07559/transform/application/x-bibtex
+    response:
+      body:
+        string: Resource not found.
+      headers:
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/plain;charset=utf-8
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 404
+        message: Not Found
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1063%2F1.4938384?mailto=example%40papercrow.ai
+    response:
+      body:
+        string: !!binary |
+          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
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "3933"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1063%2F1.4938384/transform/application/x-bibtex
+    response:
+      body:
+        string:
+          " @article{Skarlinski_2015, title={Effect of native oxide layers on
+          copper thin-film tensile properties: A reactive molecular dynamics study},
+          volume={118}, ISSN={1089-7550}, url={http://dx.doi.org/10.1063/1.4938384},
+          DOI={10.1063/1.4938384}, number={23}, journal={Journal of Applied Physics},
+          publisher={AIP Publishing}, author={Skarlinski, Michael D. and Quesnel, David
+          J.}, year={2015}, month=dec }
+
+          "
+      headers:
+        Connection:
+          - keep-alive
+        Date:
+          - Mon, 11 Aug 2025 23:07:23 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1063/1.4938384?fields=authors%2CcitationCount%2CcitationStyles%2CexternalIds%2CinfluentialCitationCount%2CisOpenAccess%2Cjournal%2CopenAccessPdf%2CpublicationDate%2CpublicationTypes%2Ctitle%2Curl%2Cvenue%2Cyear
+    response:
+      body:
+        string:
+          '{"paperId": "4187800ac995ae172c88b83f8c2c4da990d02934", "externalIds":
+          {"MAG": "2277923667", "DOI": "10.1063/1.4938384", "CorpusId": 124514389},
+          "url": "https://www.semanticscholar.org/paper/4187800ac995ae172c88b83f8c2c4da990d02934",
+          "title": "Effect of native oxide layers on copper thin-film tensile properties:
+          A reactive molecular dynamics study", "venue": "", "year": 2015, "citationCount":
+          8, "influentialCitationCount": 0, "isOpenAccess": false, "openAccessPdf":
+          {"url": "", "status": "CLOSED", "license": null}, "publicationTypes": null,
+          "publicationDate": "2015-12-21", "journal": {"name": "Journal of Applied Physics",
+          "pages": "235306", "volume": "118"}, "citationStyles": {"bibtex": "@Article{Skarlinski2015EffectON,\n
+          author = {Michael Skarlinski and D. Quesnel},\n journal = {Journal of Applied
+          Physics},\n pages = {235306},\n title = {Effect of native oxide layers on
+          copper thin-film tensile properties: A reactive molecular dynamics study},\n
+          volume = {118},\n year = {2015}\n}\n"}, "authors": [{"authorId": "9821934",
+          "name": "Michael Skarlinski"}, {"authorId": "37723150", "name": "D. Quesnel"}]}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "1116"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:23 GMT
+        Via:
+          - 1.1 97354ec70bdda7ac06cc29aed9bfdb3c.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - h7gqB1i0lzjlE58hOkQcj7VovFWzl0oOS9InFKY3wmAH2yYYoaRFgA==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - PKei1EV0vHcEaTQ=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "1116"
+        x-amzn-Remapped-Date:
+          - Mon, 11 Aug 2025 23:07:23 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - 33a7be51-114e-4d75-9bae-25bf8fb26967
+      status:
+        code: 200
+        message: OK
+version: 1

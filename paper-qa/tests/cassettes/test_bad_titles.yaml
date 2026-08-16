@@ -1,0 +1,346 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works?mailto=example%40papercrow.ai&query.title=askldjrq3rjaw938h&rows=1
+    response:
+      body:
+        string: '{"status":"ok","message-type":"work-list","message-version":"1.0.0","message":{"facets":{},"total-results":0,"items":[],"items-per-page":1,"query":{"start-index":0,"search-terms":null}}}'
+      headers:
+        Connection:
+          - keep-alive
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/search/match?query=askldjrq3rjaw938h&fields=authors%2CcitationCount%2CcitationStyles%2CexternalIds%2CinfluentialCitationCount%2CisOpenAccess%2Cjournal%2CopenAccessPdf%2CpublicationDate%2CpublicationTypes%2Ctitle%2Curl%2Cvenue%2Cyear
+    response:
+      body:
+        string: '{"error":"Title match not found"}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "34"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        Via:
+          - 1.1 0cb53c06b4d3d66446893feb6331dc78.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - xscywnHjEcHmv_Z-EN6xbqWLmtzxYC94Pi5BUTKme3rto7S9MySVfA==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Error from cloudfront
+        x-amz-apigw-id:
+          - PKeiqFMvPHcEDLQ=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "34"
+        x-amzn-Remapped-Date:
+          - Mon, 11 Aug 2025 23:07:22 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - 418b8992-c40c-4dfb-825a-a667b0502c69
+      status:
+        code: 404
+        message: Not Found
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.semanticscholar.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.semanticscholar.org/graph/v1/paper/search/match?query=Effect+of+native+oxide+layers+on+copper+thin-film+tensile+properties%3A+A+study&fields=authors%2CcitationCount%2CcitationStyles%2CexternalIds%2CinfluentialCitationCount%2CisOpenAccess%2Cjournal%2CopenAccessPdf%2CpublicationDate%2CpublicationTypes%2Ctitle%2Curl%2Cvenue%2Cyear
+    response:
+      body:
+        string:
+          '{"data": [{"paperId": "4187800ac995ae172c88b83f8c2c4da990d02934", "externalIds":
+          {"MAG": "2277923667", "DOI": "10.1063/1.4938384", "CorpusId": 124514389},
+          "url": "https://www.semanticscholar.org/paper/4187800ac995ae172c88b83f8c2c4da990d02934",
+          "title": "Effect of native oxide layers on copper thin-film tensile properties:
+          A reactive molecular dynamics study", "venue": "", "year": 2015, "citationCount":
+          8, "influentialCitationCount": 0, "isOpenAccess": false, "openAccessPdf":
+          {"url": "", "status": "CLOSED", "license": null}, "publicationTypes": null,
+          "publicationDate": "2015-12-21", "journal": {"name": "Journal of Applied Physics",
+          "pages": "235306", "volume": "118"}, "citationStyles": {"bibtex": "@Article{Skarlinski2015EffectON,\n
+          author = {Michael Skarlinski and D. Quesnel},\n journal = {Journal of Applied
+          Physics},\n pages = {235306},\n title = {Effect of native oxide layers on
+          copper thin-film tensile properties: A reactive molecular dynamics study},\n
+          volume = {118},\n year = {2015}\n}\n"}, "authors": [{"authorId": "9821934",
+          "name": "Michael Skarlinski"}, {"authorId": "37723150", "name": "D. Quesnel"}],
+          "matchScore": 210.5452}]}
+
+          '
+      headers:
+        Access-Control-Allow-Origin:
+          - "*"
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "1152"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:23 GMT
+        Via:
+          - 1.1 0cb53c06b4d3d66446893feb6331dc78.cloudfront.net (CloudFront)
+        X-Amz-Cf-Id:
+          - O4Wdc6jw0e9H8F1ef_EUg33mkx06-M5gii2Hs7IIrBywVoNh-eP3eQ==
+        X-Amz-Cf-Pop:
+          - SFO53-P7
+        X-Cache:
+          - Miss from cloudfront
+        x-amz-apigw-id:
+          - PKeiyGDoPHcEAkg=
+        x-amzn-Remapped-Connection:
+          - keep-alive
+        x-amzn-Remapped-Content-Length:
+          - "1152"
+        x-amzn-Remapped-Date:
+          - Mon, 11 Aug 2025 23:07:23 GMT
+        x-amzn-Remapped-Server:
+          - gunicorn
+        x-amzn-RequestId:
+          - fc5b901b-2a02-47d4-b608-d06bf156d0e0
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works?mailto=example%40papercrow.ai&query.title=Effect+of+native+oxide+layers+on+copper+thin-film+tensile+properties%3A+A+study&rows=1
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/8Vbi27bSJb9lYKAWXQDIl3FN92DBdxOepBs5zFxGoPZOGjQZMmqmCLVfNjRBP73
+          ObdIiaRMm+Z2dreRTiSxWHXq3nNfxctvi7KKqrpcnC7ym8VysZFlGV1Lo9ptJX67y4sbI1Vl1bt0
+          K4tS5RmuCpObvLuyOP22WEWxrDDbt/vlosqrKDUKWdYp/SSEcLgVOsuFquQGP3z6tlBZIr/KhO5M
+          okoa26igoZ8+Wdxyl/7S5p8/L5tLldoQIrpgcN+w+UchTrl96vr/DQh0FTvZbLGO79qBbzu27zr+
+          ctHBtU1HmNYCyAq5koXMYmnEeZ1VC0yyXGzrK+x0LQsMPXv1nr1vvqvsGvOrsqz18ja+rGrALvQG
+          Xrx7RYLgprC5HV6eCN7852FYFmnE71YrFUuWr9jb6DZK2QdZyqiI1xiR5MqIylIWlUyMqx0GdyCW
+          i+guKiCaT4u3mFA4hrAMYXDXsRaQiUoaASaPLq+SvRYJJKZ7ZKH7z/eYL86zSmaVkeSbSGVaIe2n
+          TzS2NCO1NfPimtaOi7wsNxGoAeVWhYorLeCqqOV9J8fE2BaKhPtQt8JdCmtpic+fMT66whxRjIGL
+          v36JqvJ0+59vJDEn/6oSydJoBw2yqMBHdSPTHatydiXZFmsDMMsztqHhqYpZFmW5gdnquKpxmSW1
+          pNFSVdgok9mtKvJsg7ugBvl1m5cYhUGAec3qUi5ZXrC1ul4zEHQri4hmwUJ5DILTmErG60z9UWPq
+          so7XLAKuLJNRiosme1UxVbI7mabsJsvvMlato+oIU9KALdk6upXsNiorbChRK83HChfjdZSpGPiw
+          LCBUCmutinzDrur0pr35J7bO7ySIvdS3qhgGRuMURJEnMtVQ19h6EWWlIuVAYNWdlD1RRVnCcAGf
+          rvIsoTs0Ikj1FkCAkyaI8822hn/AQCBS2S3Ura71d+IzDZGAHlclfW30BZmSE2j1ZrK38o62iGlT
+          bChh2GABL5JvYbLqXySQKNsBRLJjn35VEYDIikWpuWRvwJrCZBexMtlLCHjJPjDfWTLLddkPIJH9
+          42e2zYm1iiRKDIESE9I4JLfKiw1b1SkWLyTopbC7TZ5KCCsqWLKDdaoYelQb/EA7gurWCkqVaR0r
+          Yuxgf1qXm4e81FLLMz12XHuQTARJbvEdo1RmrFS6wbaahQmvhJZSLAfpNtto4eOanrm9RwNMaZOk
+          ro40ZD4YArrKctmnLr6Rmhu8mCa+yUBkQCKbgCuqaZME+bohz07JNKHpMGpJVKrTup1jFamUjKHd
+          YrmBZn9Rmjh0a4JNa4FBSM1WDYLNCPYjYqF9Yqk8u4aGIi1l7PdqB4PRuupL2WQfId69SB6IP8pY
+          tMmL7TqvS3YwNXYHs2cpLKVg57XxThPdSKQ2Cak1mjVWdV6/a3YZsY36qu+F0s5r653+FZdb1up/
+          wCWiZWPtK8SPpNk34WpM407BBcQRyEhCVCsSjiYY5E48aRQGWpZb/CoPppTCHcAgteCVWpK0EnAR
+          yo5wD+k7I3tpLjMsic0N9M1++A+EwJ/S6iffvawtzsP/+lFvgQa2q5Le+yPdv/y433yZr6rjJcgd
+          EnF7q5jsHw0PKQq20y4PcoeWC4lAAY3/ay8OzQXa4kB3cBMqVRXRll0Vqqowp6Zg47+KvIYnzuo4
+          lQePk8jGGiMdgropL0+0aYKJ0A25n4Yx+pqxKqR8YIDdSgdK9/SpI0y0t0wj+opLtCtFsUODIYld
+          a4HGRYOvt+R+h41tNTCvEH1vIduH60L8KRREv4HierRCVCkeYgauskaao2h99sv5uVHlxs/n531P
+          34az/TINqsdNcKUqmjaiZQvovfGLTRxhV1HZ+KAY1Cz17T194I682LW2iWnUZpu2hlUdVDMIFo0X
+          QxSsY9loTzvmZsxtntYbbeUd+L9enrQpARKYLtfino1cx3RCO7ADh9K/JtH5ktcFIpWBTEMB5oJS
+          FUk+9okkxHqYYQqXci3L+sj5qRueiuA4w3Rc7jtu6AZItZDB1Ntm7hyBlXKrdVVty9PLk8sTJHiU
+          NFFi1qJGGmV0+VNzC1BdE9gS8GOCcE4DkKTqxNM4ZKuUuu0z1pAQwWIoP3upvScJecR3avU9IFIb
+          cjoynLKzp+NkVSc7Sv6QIazU104RwNhojn4SASWadbXOm/T4GrNR6v0GgTUCoV6YlD5jxpTkdHET
+          FUhWyhtFm5fIqzK9/ZUqdMWBqAAHETXZJWZrE+rfMqWT+mpHW/6Qx2soBtsTTcagkwEkDTQZe1/k
+          sFKY2LIbuKSchP0TpQ0Tjmf5S/bbxRmlwcsO8IvoViXs9QDu3+E3M5kOsUZJopr86P8c8HJyAYu9
+          kMT4jU6UV+xN5waQUKlMSvIVzxPOZ6rzNle6PLKFv+gn+nkGNcrJTP9AZC2cG7lr6jmbexYqQ9tD
+          bSM8zn+PxWRtpCnS2A0xMfTtoYOwxOVJlrncCQJ706coEXSH+qsxdPIde6fRmtPi7PwClVqWawE3
+          9x2u/ZbC0+popksU9pH8LrZL8n0Jm0E+k1DC3rrxd9sql83PGRnRqyyB+y52AwyE/AlZWBrHEwPs
+          ecKyLMsZyooKxytfBL4XrPuisv0+Th6MyOp8LSmVzWMTZe2tOQXVmQfV5kIMoXILHjTZRCbwuFz4
+          nj9wP0PA7phyk1uzLSymwLrzwDqB8IZghYfoZcKlRpuoIsSByV2TO04fs+tNCvkMMzwTszcPsz+K
+          GFUfAJcou8hCTG6ZjaF0NuRPGtG5rhzNfg03hd2fSw7bmkQvtMStQZBy+QC9+D7og5noRTgJnpvE
+          GEs8AZ5/H/DhTH/r8EnwlgY/5Lo35I39fcBrIcxAz0PbFe5YPmkLi4faijuXor1IZ5/hCObXJjvb
+          blOTvV/vymm4M4ObLdwjJ6hjW0oytu16mH5NMpsCG/tVVtU0TmuuPTrBGM4QOYDgAz8dTop0Bsy5
+          4c8WwRh5h24afsMaQP6+blrMDISWA5MbZjgI25cnRDjE3Z9NX5iHMQfM/oAOo+FQM1aHbvbzJOiZ
+          AVGErmOFT4H2zcOYDvR00jEL9MyIaFsawFF2FFtfNsL2AivqQ7WsgblZ466h9WQ6U5pEOzMGch93
+          PskLxJD9mE7EgxjCx8L3LBHPDH3Cs4U4Ct2N/7V8zOsOQkY4xOqP2V3ne5/pMmaHu+OEOYBjo2hX
+          CuEM2Dt0wGPR+S18DEOU29TZJFBrbmQLXIcHT9EBydB+TEcHd1LEc+hgzYxv3HJdbj0KWmsUib95
+          GNeLzUNyTPiKZ3HDmhv1jurOJpioL9s0KikNspEDmXyI2x36jTH7e5WBJXAe7+lIeBr0zBjIbUjy
+          KIULwGmLu7Yh3BBxG3+gg8PARwg+Br31dx/onPjlV3pKV07inxkOPX80//wSF7vyush1cQgW4c8g
+          d7aCYeLhjTvsc8wC6f+tyO+q9ST0mUHRG69ZtimRk5yxSWm/jtVdHR4OcY/WW7oQn+EErZmB0eHj
+          SX9Vrgg3QrllgjoDnovppOkjnaVc5KlK2C90ODwJe26EDFz76BBhzCXaQ6Z8b5c4N0KKMPSewOzS
+          L82Q0cIQ1/5sULdmxkgn8B5HrAkZWGY7qDtHsAaYxwqBuf7bnhkyQ/tI0rpq+bKFlSHfG1ZXR6Xg
+          WHn1em+DjT2eTeOde9QZToX4wDyM6fgcTBriHHLYM4MkClVXHKXVbcYX2gG3jqK6PQl2XsVtzwyP
+          Dj8+TQ44wDp+4Dm22xwruWEQBAOfEU4X3+/XKs1LKgmup0HPjIncFeF4Vu34KMGHWAUfpiBjJzGz
+          02p7Zii0Q/foDKzLq53wKJRMph1z8mp7Zuw7PoSmwBdv1zC00NUV4kC2/VNoGvFIltEedD2PwTOj
+          nrBc+0kvESDP2I/p3LHzDAbP8BIzox7y+7EEY4Ob20zaNxuv2/k1Z5LGI01Ek8Bnxj5POGLU8LzA
+          DoOh3YnFVJR+vQ8ez2KGMzfePc4KSt/MI7xu2MfrPZ0ITWKd/1hvCNYBIaIsqwt5azQnzQb3hU19
+          kZbwxKBQcexJapxhqpbMvaJlchczg58jjk+U9uzwQZD/ZXbYD5zusLIYaHcs/3p5cfbqjQHxrCEk
+          6gkx2dt6+iDLmRm9QMTAfZSZyHgDcz+kiwnBQFp/NqlxZoYv7rjNs5mjIpqHnmsgJthUT1+eOPhl
+          P7KrRIdPccZODrWw07ZN0HzQCzm5m5khjguXH6cPR7sRgT4WOIzseDt8pj526vVndzMz/nn8KJRw
+          //KkFMLzQgPFNf7HXwPbs4al6iNB+/06KiV7+UetUnVlshdqtaqfYYVznw0Go49ldSMBPaagaIiq
+          1TatIauEPzgnEGObaJsU4rWi8gSTTYKfe1gajD9U7j1f0WcF3Bk+lP2uz1fcmVHRsmz/IegLzi1u
+          +A63f+DiR04loTEQ+DDGjBaE+4M86rx53uNMd26U9K3HqxVO1RX3nGBgsMFzysHnlyruzIhoWY7g
+          T51veETtdkz38Hha2HPcvTuzKBS291DKPHQhPi1lL3DEUZfE9GPOvpSfV2S5c58c2iNPOy94aAnD
+          5SGIbYHYPg+MgaztYZsBf05izc4msc+NsK4vjh4g7nOnABJ3hrY4WSHSOz3U/jMJc2boDJ2HEv5i
+          lnUZN/0zdKAr/CGVh8npmKO+qIvVMx3GzODoi9GD3O2g8cQ5LrXcYQk+FuSpdfGoc6N9sShSGb0R
+          sO9Xfd3cSB2JdMqgZKLTWRWX1GCaRtl13UCVGZZJVXajGwZ/+/Drot9c238tSTfWUrMw/mq7f41t
+          stIduL3u20PPMD66Aq5dP/awUQl7v4vfmzZGE/ctuhei2tbiiIA2ffxYeTCie8PsNidpUxN6lkAP
+          vXtwsdw1r0nQN1Lp/+t26qzcylitIPv/wU7URqVRoaqdEa9lfEOvyJGqE7nNS/VIu7VlL72l5Yy8
+          z2cb3DMs56NwT7l/atvH3dYeUgoR0nGF7rYu47zAnU5oeq7l2dRWum+c/rbYFmoTFTv6+LR8+6KF
+          9IQW3F54FD+F5+O3prXayFdG01rdvPxjNK3VRp4ZvbdddGv14v6+fVvwqabzo37Ysv8e4t6s2lcO
+          vw3fPZz3dh0WORbDw5b0fiP9q4uLt2SiSH2EEYQ6o0SsCw3fRUz4rLeWtSSCSbZsaqDAW9C7JeS5
+          D3cT0dtBXSNsb2Q3NxGo11Fc6RcxJwR4GD/9kmFrRFndtjA3itar6tdRDdJi4yHFcvFHLRsSgYNF
+          ZejXVBennDq/6dVNAy6O3mDN6jS9v7//NyeohctFOwAA
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - "3966"
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        content-encoding:
+          - gzip
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        vary:
+          - Accept-Encoding
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - api.crossref.org
+        user-agent:
+          - python-httpx/0.28.1
+      method: GET
+      uri: https://api.crossref.org/works/10.1063%2F1.4938384/transform/application/x-bibtex
+    response:
+      body:
+        string:
+          " @article{Skarlinski_2015, title={Effect of native oxide layers on
+          copper thin-film tensile properties: A reactive molecular dynamics study},
+          volume={118}, ISSN={1089-7550}, url={http://dx.doi.org/10.1063/1.4938384},
+          DOI={10.1063/1.4938384}, number={23}, journal={Journal of Applied Physics},
+          publisher={AIP Publishing}, author={Skarlinski, Michael D. and Quesnel, David
+          J.}, year={2015}, month=dec }
+
+          "
+      headers:
+        Connection:
+          - keep-alive
+        Date:
+          - Mon, 11 Aug 2025 23:07:24 GMT
+        Transfer-Encoding:
+          - chunked
+        access-control-allow-headers:
+          - X-Requested-With, Accept, Accept-Encoding, Accept-Charset, Accept-Language,
+            Accept-Ranges, Cache-Control
+        access-control-allow-origin:
+          - "*"
+        access-control-expose-headers:
+          - Link
+        permissions-policy:
+          - interest-cohort=()
+        server:
+          - Jetty(9.4.40.v20210413)
+        x-api-pool:
+          - plus
+        x-rate-limit-interval:
+          - 1s
+        x-rate-limit-limit:
+          - "150"
+      status:
+        code: 200
+        message: OK
+version: 1

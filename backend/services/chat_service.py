@@ -106,11 +106,12 @@ async def ask_question(
     # ------------------------------------------------------------------ #
     # 2. Route: no documents → straight to general LLM with full chat history
     # ------------------------------------------------------------------ #
-    docs_count = get_indexed_count()
+    docs_count = get_indexed_count(user_id=user_id)
 
     if docs_count == 0:
         logger.info(
-            "No documents indexed — routing question to general LLM (history turns=%d): %s",
+            "No documents indexed for user %s — routing question to general LLM (history turns=%d): %s",
+            user_id,
             len(chat_history),
             question[:80],
         )
@@ -134,7 +135,7 @@ async def ask_question(
         # -------------------------------------------------------------- #
         doc_names = [
             p.split("/")[-1].split("\\")[-1]   # basename only
-            for p in get_indexed_paths()
+            for p in get_indexed_paths(user_id=user_id)
         ]
 
         use_rag = await is_question_relevant_to_docs(
@@ -147,7 +148,8 @@ async def ask_question(
             # Contextualize query for document retrieval in case it's a follow-up
             search_query = await contextualize_query(question, chat_history=chat_history)
             logger.info(
-                "Documents relevant — routing to RAG pipeline with query=%r: %s",
+                "Documents relevant for user %s — routing to RAG pipeline with query=%r: %s",
+                user_id,
                 search_query[:80],
                 question[:80],
             )
@@ -169,8 +171,8 @@ async def ask_question(
             except Exception as exc:
                 logger.warning("Vector store retrieval failed (non-fatal): %s", exc)
 
-            # Try PaperQA agentic query first
-            pqa_result = await pqa_query(search_query)
+            # Try PaperQA agentic query first (scoped to user's documents)
+            pqa_result = await pqa_query(search_query, user_id=user_id)
 
             # Map PaperQA sources → citations
             citations = [

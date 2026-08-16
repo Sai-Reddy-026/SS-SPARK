@@ -86,9 +86,10 @@ async def lifespan(app: FastAPI):
         logger.info(
             "Re-indexing %d existing documents into PaperQA...", len(existing_docs)
         )
-        paths = [d.file_path for d in existing_docs]
-        await pqa.reindex_all(paths)
-        logger.info("Re-indexing complete. %d docs indexed.", pqa.get_indexed_count())
+        for d in existing_docs:
+            if d.file_path and Path(d.file_path).exists():
+                await pqa.add_document(d.file_path, user_id=d.user_id)
+        logger.info("PaperQA startup re-indexing complete.")
     else:
         logger.info("No existing documents to re-index.")
 

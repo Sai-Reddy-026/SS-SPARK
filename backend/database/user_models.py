@@ -134,6 +134,7 @@ class UserRecord(BaseModel):
     total_documents: int = 0
     total_questions: int = 0
     storage_used_mb: float = 0.0
+    token_version: int = 1
 
 
 class OAuthAccount(BaseModel):

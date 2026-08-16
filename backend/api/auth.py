@@ -123,8 +123,9 @@ async def register(req: RegisterRequest):
     )
     created = await create_user(user_record)
 
+    token_ver = getattr(created, "token_version", 1)
     access_token = create_access_token({"sub": created.id, "email": created.email, "role": created.role})
-    refresh_token = create_refresh_token({"sub": created.id, "email": created.email})
+    refresh_token = create_refresh_token({"sub": created.id, "email": created.email, "token_version": token_ver})
 
     await record_audit_log(created.id, LogAction.REGISTER, f"User registered with email: {created.email}")
 
@@ -158,8 +159,9 @@ async def login(req: LoginRequest):
             detail="Your account has been suspended. Please contact support.",
         )
 
+    token_ver = getattr(user, "token_version", 1)
     access_token = create_access_token({"sub": user.id, "email": user.email, "role": user.role})
-    refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
+    refresh_token = create_refresh_token({"sub": user.id, "email": user.email, "token_version": token_ver})
 
     await record_audit_log(user.id, LogAction.LOGIN, "User logged in successfully")
 
@@ -172,7 +174,7 @@ async def login(req: LoginRequest):
 
 @router.post("/refresh")
 async def refresh_tokens(req: RefreshRequest):
-    """Obtain a new access token using a valid refresh token."""
+    """Obtain a new access token using a valid refresh token with revocation check."""
     payload = decode_token(req.refresh_token)
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type.")
@@ -181,6 +183,15 @@ async def refresh_tokens(req: RefreshRequest):
     user = await get_user_by_id(user_id) if user_id else None
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found.")
+
+    # Validate token_version to ensure revoked tokens cannot be used
+    token_ver = payload.get("token_version", 1)
+    current_ver = getattr(user, "token_version", 1)
+    if token_ver != current_ver:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked or expired. Please log in again.",
+        )
 
     new_access = create_access_token({"sub": user.id, "email": user.email, "role": user.role})
     return {
@@ -239,14 +250,18 @@ async def forgot_password(req: ForgotPasswordRequest):
 
 @router.post("/reset-password")
 async def reset_password(req: ResetPasswordRequest):
-    """Reset password using a reset token."""
+    """Reset password using a reset token and revoke existing refresh tokens."""
     payload = decode_token(req.token)
     user_id = payload.get("sub")
     user = await get_user_by_id(user_id) if user_id else None
     if not user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token or user.")
 
-    await update_user(user.id, {"hashed_password": hash_password(req.new_password)})
+    new_ver = getattr(user, "token_version", 1) + 1
+    await update_user(user.id, {
+        "hashed_password": hash_password(req.new_password),
+        "token_version": new_ver,
+    })
     await record_audit_log(user.id, LogAction.PASSWORD_RESET, "Password reset successfully")
     return {
         "success": True,
@@ -272,8 +287,10 @@ async def verify_email(req: VerifyEmailRequest):
 
 @router.post("/logout")
 async def logout(current_user: Optional[UserRecord] = Depends(get_optional_user)):
-    """Log out current user (works with or without a valid token)."""
+    """Log out current user and revoke their refresh tokens."""
     if current_user:
+        new_ver = getattr(current_user, "token_version", 1) + 1
+        await update_user(current_user.id, {"token_version": new_ver})
         await record_audit_log(current_user.id, LogAction.LOGOUT, "User logged out")
     return {
         "success": True,
@@ -307,6 +324,15 @@ async def oauth_config():
     }
 
 
+def _build_oauth_redirect_uri(request: Request) -> str:
+    """Construct the Google OAuth redirect URI respecting proxy headers and HTTPS."""
+    proto = request.headers.get("x-forwarded-proto", "")
+    base = str(request.base_url).rstrip("/")
+    if proto == "https" and base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    return f"{base}/api/auth/oauth/google/callback"
+
+
 @router.get("/oauth/google")
 async def oauth_google_redirect(request: Request):
     """Redirect to Google OAuth consent screen or redirect to login with clear error if not configured."""
@@ -317,7 +343,7 @@ async def oauth_google_redirect(request: Request):
             url=f"{frontend_url}/login?error={urllib.parse.quote('Google OAuth is not configured in backend .env. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or use email/password login.')}"
         )
 
-    redirect_uri = f"{str(request.base_url).rstrip('/')}/api/auth/oauth/google/callback"
+    redirect_uri = _build_oauth_redirect_uri(request)
     params = {
         "client_id": cfg.GOOGLE_CLIENT_ID,
         "redirect_uri": redirect_uri,
@@ -340,7 +366,7 @@ async def oauth_google_callback(request: Request, code: Optional[str] = None, er
         err_msg = error or "Authorization code missing"
         return RedirectResponse(url=f"{frontend_url}/login?error={urllib.parse.quote(err_msg)}")
 
-    redirect_uri = f"{str(request.base_url).rstrip('/')}/api/auth/oauth/google/callback"
+    redirect_uri = _build_oauth_redirect_uri(request)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -407,7 +433,8 @@ async def oauth_google_callback(request: Request, code: Optional[str] = None, er
 
             role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
             jwt_access = create_access_token({"sub": user.id, "email": user.email, "role": role_val})
-            jwt_refresh = create_refresh_token({"sub": user.id, "email": user.email})
+            token_ver = getattr(user, "token_version", 1)
+            jwt_refresh = create_refresh_token({"sub": user.id, "email": user.email, "token_version": token_ver})
 
             await record_audit_log(user.id, LogAction.LOGIN, "User logged in via Google OAuth")
 

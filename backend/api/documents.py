@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from core.security import get_optional_user
 from database.models import delete_document, get_document_by_id, get_documents, rename_document
 from database.user_models import LogAction, UserRecord, record_audit_log
+from rag import paperqa_connector as pqa
 from rag.vector_store import get_vector_store
 
 logger = logging.getLogger("ss_spark.documents_api")
@@ -66,7 +67,14 @@ async def delete_doc(
     vs = get_vector_store()
     vs.delete_by_doc_id(doc_id)
 
-    # 2. Delete file from disk if it exists
+    # 2. Evict from PaperQA in-memory index
+    if doc.file_path:
+        try:
+            await pqa.remove_document(doc.file_path, user_id=user_id)
+        except Exception as exc:
+            logger.warning("PaperQA document eviction failed: %s", exc)
+
+    # 3. Delete file from disk if it exists
     if doc.file_path and Path(doc.file_path).exists():
         try:
             Path(doc.file_path).unlink(missing_ok=True)
@@ -76,7 +84,7 @@ async def delete_doc(
         except Exception as exc:
             logger.warning("Could not delete file from disk: %s", exc)
 
-    # 3. Delete database record
+    # 4. Delete database record
     await delete_document(doc_id, user_id=user_id)
     if current_user:
         await record_audit_log(

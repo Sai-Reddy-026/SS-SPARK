@@ -5,6 +5,7 @@ Document upload, extraction, and vector indexing endpoint for SS SPARK.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import uuid
@@ -49,6 +50,7 @@ async def upload_documents(
     embedder = get_embedder()
 
     uploaded_results = []
+    user_id = current_user.id if current_user else None
 
     for file in files:
         filename = Path(file.filename).name
@@ -75,10 +77,11 @@ async def upload_documents(
         pages_count = 1
         chunks = []
 
-        # Extract text based on file type
+        # Extract text based on file type (offloaded to thread to keep async event loop responsive)
         if suffix in (".png", ".jpg", ".jpeg", ".webp"):
             kind = "image"
-            _, chunks = process_image_to_chunks(
+            _, chunks = await asyncio.to_thread(
+                process_image_to_chunks,
                 str(dest_path),
                 doc_id=doc_id,
                 upload_dir=str(upload_dir),
@@ -87,8 +90,9 @@ async def upload_documents(
             )
         else:
             kind = "docx" if suffix in (".docx", ".doc") else ("txt" if suffix == ".txt" else "pdf")
-            pages_count = count_pdf_pages(str(dest_path))
-            chunks = extract_chunks(
+            pages_count = await asyncio.to_thread(count_pdf_pages, str(dest_path))
+            chunks = await asyncio.to_thread(
+                extract_chunks,
                 str(dest_path),
                 doc_id=doc_id,
                 chunk_size=settings.CHUNK_SIZE,
@@ -101,23 +105,23 @@ async def upload_documents(
             try:
                 texts = [c.text for c in chunks]
                 page_nums = [c.page for c in chunks]
-                embeddings = embedder.embed(texts)
+                embeddings = await asyncio.to_thread(embedder.embed, texts)
                 vs.add_chunks(
                     doc_id=doc_id,
                     source_name=filename,
                     chunks=texts,
                     embeddings=embeddings,
                     pages=page_nums,
-                    user_id=current_user.id if current_user else None,
+                    user_id=user_id,
                 )
                 chunks_indexed = len(chunks)
             except Exception as exc:
                 logger.warning("Vector store indexing failed for %s: %s", filename, exc)
 
-        # Index into PaperQA connector
+        # Index into PaperQA connector with user isolation
         pqa_indexed = False
         try:
-            pqa_indexed = await pqa.add_document(str(dest_path))
+            pqa_indexed = await pqa.add_document(str(dest_path), user_id=user_id)
         except Exception as exc:
             logger.warning("PaperQA indexing failed for %s: %s", filename, exc)
 

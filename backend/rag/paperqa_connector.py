@@ -36,11 +36,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
-# Global Docs instance
+# User-scoped Docs instances (Per-user isolation)
 # --------------------------------------------------------------------------- #
 
-_docs: Any = None          # paperqa.Docs
-_indexed_paths: set[str] = set()
+_user_docs: dict[str, Any] = {}
+_user_indexed_paths: dict[str, set[str]] = {}
+
+
+def _normalize_uid(user_id: Optional[str]) -> str:
+    return user_id.strip() if (user_id and user_id.strip()) else "global"
 
 
 def _build_settings():
@@ -59,31 +63,36 @@ def _build_settings():
             "PaperQA is not installed or importable. Ensure packages/paperqa is installed via pip."
         ) from exc
 
-    openai_key = os.getenv("OPENAI_API_KEY", "")
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-    nvidia_key = os.getenv("NVIDIA_API_KEY", "") or os.getenv("NVIDIA_NIM_API_KEY", "")
+    from core.config import get_settings
+    cfg = get_settings()
+
+    openai_key = cfg.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
+    gemini_key = cfg.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+    anthropic_key = cfg.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY", "")
+    nvidia_key = cfg.NVIDIA_API_KEY or os.getenv("NVIDIA_API_KEY", "") or os.getenv("NVIDIA_NIM_API_KEY", "")
+
+    # Pick embedding model based on available keys
+    if openai_key:
+        embed_name = "text-embedding-3-small"
+    else:
+        embed_name = "all-MiniLM-L6-v2"
 
     # Pick the best available LLM
     if openai_key:
         llm_name = "gpt-4o-mini"
-        embed_name = "text-embedding-3-small"
         logger.info("PaperQA connector: using OpenAI (model=%s)", llm_name)
-    elif gemini_key:
-        llm_name = "gemini/gemini-3.5-flash"
-        embed_name = "gemini/gemini-embedding-001"
-        os.environ["GEMINI_API_KEY"] = gemini_key
-        os.environ["GOOGLE_API_KEY"] = gemini_key  # litellm also reads GOOGLE_API_KEY
-        logger.info("PaperQA connector: using Gemini (model=%s)", llm_name)
     elif nvidia_key:
-        llm_name = "nvidia_nim/meta/llama-3.3-70b-instruct"
-        embed_name = "text-embedding-3-small"
+        llm_name = "nvidia_nim/meta/llama-3.1-8b-instruct"
         os.environ["NVIDIA_API_KEY"] = nvidia_key
         os.environ["NVIDIA_NIM_API_KEY"] = nvidia_key
         logger.info("PaperQA connector: using NVIDIA NIM (model=%s)", llm_name)
+    elif gemini_key:
+        llm_name = "gemini/gemini-3.5-flash"
+        os.environ["GEMINI_API_KEY"] = gemini_key
+        os.environ["GOOGLE_API_KEY"] = gemini_key  # litellm also reads GOOGLE_API_KEY
+        logger.info("PaperQA connector: using Gemini (model=%s)", llm_name)
     elif anthropic_key:
         llm_name = "claude-3-5-haiku-20241022"
-        embed_name = "text-embedding-3-small"  # Anthropic has no embedding API; fallback
         logger.info("PaperQA connector: using Anthropic (model=%s)", llm_name)
     else:
         raise RuntimeError(
@@ -98,111 +107,134 @@ def _build_settings():
     )
 
 
-def _get_or_create_docs() -> Any:
-    """Return (and lazily create) the global PaperQA Docs instance."""
-    global _docs
-    if _docs is None:
-        from paperqa import Docs
-        _docs = Docs()
-        logger.info("Created new PaperQA Docs instance.")
-    return _docs
+def _get_or_create_user_docs(user_id: Optional[str] = None) -> Any:
+    """Return (and lazily create) the user-scoped PaperQA Docs instance."""
+    from paperqa import Docs
+    uid = _normalize_uid(user_id)
+    if uid not in _user_docs:
+        _user_docs[uid] = Docs()
+        logger.info("Created new PaperQA Docs instance for user: %s", uid)
+    return _user_docs[uid]
 
 
-def reset_docs() -> None:
-    """Destroy the global Docs cache (called after document deletion)."""
-    global _docs, _indexed_paths
-    _docs = None
-    _indexed_paths = set()
-    logger.info("PaperQA Docs cache cleared.")
+def _get_or_create_docs(user_id: Optional[str] = None) -> Any:
+    """Compatibility alias for user-scoped Docs getter."""
+    return _get_or_create_user_docs(user_id)
+
+
+def reset_docs(user_id: Optional[str] = None) -> None:
+    """Destroy the Docs cache for a specific user, or all users if user_id is None."""
+    global _user_docs, _user_indexed_paths
+    if user_id is not None:
+        uid = _normalize_uid(user_id)
+        _user_docs.pop(uid, None)
+        _user_indexed_paths.pop(uid, None)
+        logger.info("PaperQA Docs cache cleared for user: %s", uid)
+    else:
+        _user_docs.clear()
+        _user_indexed_paths.clear()
+        logger.info("PaperQA all user Docs caches cleared.")
 
 
 # --------------------------------------------------------------------------- #
 # Document ingestion
 # --------------------------------------------------------------------------- #
 
-async def add_document(file_path: str) -> bool:
+async def add_document(
+    file_path: str,
+    user_id: Optional[str] = None,
+    citation: Optional[str] = None,
+) -> bool:
     """
-    Index a document into the PaperQA Docs collection.
+    Index a document into the user's PaperQA Docs collection.
 
     Uses `Docs.aadd()` — PaperQA's native async add which:
       1. Reads and parses the PDF/text
-      2. Generates an LLM-based citation if none is provided
+      2. Uses citation if provided, or generates an LLM-based citation
       3. Embeds text chunks into its NumpyVectorStore
       4. Stores Doc + Text objects in memory
 
     Args:
         file_path: Absolute path to the document file.
+        user_id: Owner of the document for multi-tenant isolation.
+        citation: Optional explicit citation string.
 
     Returns:
         True on success, False if document was already indexed or failed.
     """
-    global _indexed_paths
+    uid = _normalize_uid(user_id)
+    if uid not in _user_indexed_paths:
+        _user_indexed_paths[uid] = set()
 
-    if file_path in _indexed_paths:
-        logger.debug("Already indexed: %s", file_path)
+    if file_path in _user_indexed_paths[uid]:
+        logger.debug("Already indexed for user %s: %s", uid, file_path)
         return True
 
     if not Path(file_path).exists():
         logger.warning("File does not exist: %s", file_path)
         return False
 
-    docs = _get_or_create_docs()
+    docs = _get_or_create_user_docs(uid)
     settings = _build_settings()
 
     try:
         docname = await docs.aadd(
             path=file_path,
             settings=settings,
-            citation=None,   # let PaperQA auto-generate citation via LLM
+            citation=citation,
         )
         if docname:
-            _indexed_paths.add(file_path)
-            logger.info("PaperQA indexed '%s' as '%s'", Path(file_path).name, docname)
+            _user_indexed_paths[uid].add(file_path)
+            logger.info("PaperQA indexed '%s' for user %s as '%s'", Path(file_path).name, uid, docname)
             return True
         else:
-            logger.warning("PaperQA skipped '%s' (already exists or empty)", file_path)
-            _indexed_paths.add(file_path)  # mark as processed to avoid retries
+            logger.warning("PaperQA skipped '%s' for user %s (already exists or empty)", file_path, uid)
+            _user_indexed_paths[uid].add(file_path)  # mark as processed to avoid retries
             return False
     except Exception as exc:
-        logger.error("PaperQA failed to index '%s': %s", file_path, exc)
+        logger.error("PaperQA failed to index '%s' for user %s: %s", file_path, uid, exc)
         return False
 
 
-async def add_text_content(text: str, source_name: str) -> bool:
+async def remove_document(file_path: str, user_id: Optional[str] = None) -> None:
+    """Evict a document from PaperQA memory for the specified user."""
+    uid = _normalize_uid(user_id)
+    if uid in _user_indexed_paths and file_path in _user_indexed_paths[uid]:
+        _user_indexed_paths[uid].discard(file_path)
+        remaining = list(_user_indexed_paths[uid])
+        # Re-initialize user docs from remaining active paths
+        reset_docs(user_id=uid)
+        for path in remaining:
+            await add_document(path, user_id=uid)
+        logger.info("Evicted '%s' from PaperQA for user %s (%d remaining)", Path(file_path).name, uid, len(remaining))
+
+
+async def add_text_content(text: str, source_name: str, user_id: Optional[str] = None) -> bool:
     """
-    Index raw text (e.g. OCR output) into the PaperQA Docs collection
-    by writing it to a temporary .txt file and calling aadd().
-
-    Args:
-        text:        The extracted text content.
-        source_name: A label used as the document name.
-
-    Returns:
-        True on success.
+    Index raw text (e.g. OCR output) into the user's PaperQA Docs collection.
     """
     import tempfile
 
-    # Write to a temp file with the source name embedded
     tmp_dir = Path(tempfile.gettempdir()) / "ss_spark_ocr"
     tmp_dir.mkdir(exist_ok=True)
     safe_stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in source_name)
     tmp_file = tmp_dir / f"{safe_stem}.txt"
     tmp_file.write_text(text, encoding="utf-8")
 
-    return await add_document(str(tmp_file))
+    return await add_document(str(tmp_file), user_id=user_id)
 
 
-async def reindex_all(file_paths: list[str]) -> None:
+async def reindex_all(file_paths: list[str], user_id: Optional[str] = None) -> None:
     """
-    Reset the Docs cache and re-index all given file paths.
-    Called on startup and after document deletion.
+    Reset Docs and re-index all given file paths for the given user.
     """
-    reset_docs()
+    reset_docs(user_id=user_id)
     for path in file_paths:
-        await add_document(path)
+        await add_document(path, user_id=user_id)
+    uid = _normalize_uid(user_id)
     logger.info(
-        "Re-indexing complete. %d/%d documents indexed.",
-        len(_indexed_paths), len(file_paths)
+        "Re-indexing complete for user %s: %d/%d documents indexed.",
+        uid, len(_user_indexed_paths.get(uid, set())), len(file_paths)
     )
 
 
@@ -210,37 +242,17 @@ async def reindex_all(file_paths: list[str]) -> None:
 # Question answering
 # --------------------------------------------------------------------------- #
 
-async def query(question: str) -> dict[str, Any]:
+async def query(question: str, user_id: Optional[str] = None) -> dict[str, Any]:
     """
-    Send a question to PaperQA's agentic RAG pipeline.
+    Send a question to the user-scoped PaperQA agentic RAG pipeline.
 
-    IMPORTANT: Callers must ensure get_indexed_count() > 0 before calling this.
-    The no-docs routing is handled upstream in chat_service.py.
-
-    Flow:
-        question → agent_query() → SearchIndex → GatherEvidence tool
-                 → GenerateAnswer tool → AnswerResponse
-
-    The AnswerResponse.session (a PQASession) contains:
-        - session.answer          : final answer string
-        - session.contexts        : list[Context] with source citations
-        - session.references      : formatted bibliography string
-        - session.formatted_answer: answer + citations combined
-
-    Returns:
-        {
-            "answer": str,
-            "sources": [{"source": str, "page": int, "snippet": str, "relevance": float}],
-            "confidence": float,
-            "references": str,
-            "cost": float,
-            "status": str,
-        }
+    Multi-user isolation:
+        Only queries the Docs collection owned by `user_id`.
     """
     from paperqa.agents import agent_query
-    from paperqa.agents.models import AgentStatus
 
-    docs = _get_or_create_docs()
+    uid = _normalize_uid(user_id)
+    docs = _get_or_create_user_docs(uid)
     settings = _build_settings()
 
     try:
@@ -250,7 +262,7 @@ async def query(question: str) -> dict[str, Any]:
             docs=docs,
         )
     except Exception as exc:
-        logger.error("PaperQA agent_query failed: %s", exc)
+        logger.error("PaperQA agent_query failed for user %s: %s", uid, exc)
         return {
             "answer": (
                 f"I encountered an error while answering your question: {exc}\n\n"
@@ -315,13 +327,16 @@ async def query(question: str) -> dict[str, Any]:
 # Status helpers
 # --------------------------------------------------------------------------- #
 
-def get_indexed_count() -> int:
-    return len(_indexed_paths)
+def get_indexed_count(user_id: Optional[str] = None) -> int:
+    uid = _normalize_uid(user_id)
+    return len(_user_indexed_paths.get(uid, set()))
 
 
-def get_indexed_paths() -> list[str]:
-    return list(_indexed_paths)
+def get_indexed_paths(user_id: Optional[str] = None) -> list[str]:
+    uid = _normalize_uid(user_id)
+    return list(_user_indexed_paths.get(uid, set()))
 
 
-def is_document_indexed(file_path: str) -> bool:
-    return file_path in _indexed_paths
+def is_document_indexed(file_path: str, user_id: Optional[str] = None) -> bool:
+    uid = _normalize_uid(user_id)
+    return file_path in _user_indexed_paths.get(uid, set())

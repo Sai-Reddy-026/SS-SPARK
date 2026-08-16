@@ -160,7 +160,7 @@ async def ask_question(
                 cfg = get_settings()
                 vs = get_vector_store(str(cfg.CHROMA_DIR), cfg.CHROMA_COLLECTION)
                 if vs.count() > 0:
-                    retrieval_res = qdrant_retrieve(
+                    retrieval_res = await qdrant_retrieve(
                         search_query,
                         n_results=cfg.TOP_K_RESULTS,
                         user_id=user_id,

@@ -46,9 +46,15 @@ class VectorStore:
                 from qdrant_client.models import Distance, VectorParams
 
                 if qdrant_api_key:
-                    self.qdrant_client = QdrantClient(url=f"https://{qdrant_host}:{qdrant_port}", api_key=qdrant_api_key)
+                    if qdrant_host.startswith("http://") or qdrant_host.startswith("https://"):
+                        self.qdrant_client = QdrantClient(url=qdrant_host, api_key=qdrant_api_key)
+                    else:
+                        self.qdrant_client = QdrantClient(url=f"https://{qdrant_host}:{qdrant_port}", api_key=qdrant_api_key)
                 else:
-                    self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port, timeout=2.0)
+                    if qdrant_host.startswith("http://") or qdrant_host.startswith("https://"):
+                        self.qdrant_client = QdrantClient(url=qdrant_host, timeout=2.0)
+                    else:
+                        self.qdrant_client = QdrantClient(host=qdrant_host, port=qdrant_port, timeout=2.0)
 
                 # Ensure collection exists
                 collections = [c.name for c in self.qdrant_client.get_collections().collections]

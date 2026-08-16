@@ -56,8 +56,7 @@ def _build_settings():
         from paperqa import Settings
     except ImportError as exc:
         raise RuntimeError(
-            "PaperQA is not installed. Run: pip install -e "
-            "\"c:/Users/saidu/OneDrive/Desktop/ai_project/paper-qa\""
+            "PaperQA is not installed or importable. Ensure paper-qa/src is on sys.path or installed via pip."
         ) from exc
 
     openai_key = os.getenv("OPENAI_API_KEY", "")
@@ -177,7 +176,7 @@ async def add_text_content(text: str, source_name: str) -> bool:
     import tempfile
 
     # Write to a temp file with the source name embedded
-    tmp_dir = Path(tempfile.gettempdir()) / "papergenius_ocr"
+    tmp_dir = Path(tempfile.gettempdir()) / "ss_spark_ocr"
     tmp_dir.mkdir(exist_ok=True)
     safe_stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in source_name)
     tmp_file = tmp_dir / f"{safe_stem}.txt"

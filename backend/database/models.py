@@ -46,6 +46,10 @@ class CitationItem(BaseModel):
     relevance: float = 0.0
 
 
+# Backward compatibility alias
+Citation = CitationItem
+
+
 class UploadedDoc(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -168,10 +172,18 @@ async def save_document(doc: UploadedDoc) -> UploadedDoc:
     return doc
 
 
-async def get_documents(user_id: Optional[str] = None) -> List[UploadedDoc]:
-    """Fetch documents, strictly isolated by user_id."""
+async def get_documents(
+    user_id: Optional[str] = None,
+    all_users: bool = False,
+) -> List[UploadedDoc]:
+    """Fetch documents. When all_users is True (e.g. system startup), returns all documents."""
     if _db is not None:
-        query: Dict[str, Any] = {"user_id": user_id} if user_id else {"user_id": None}
+        if all_users:
+            query: Dict[str, Any] = {}
+        elif user_id:
+            query = {"user_id": user_id}
+        else:
+            query = {"user_id": None}
         cursor = _db.documents.find(query).sort("uploaded_at", -1)
         docs = []
         async for item in cursor:
@@ -179,6 +191,8 @@ async def get_documents(user_id: Optional[str] = None) -> List[UploadedDoc]:
             docs.append(UploadedDoc(**item))
         return docs
     else:
+        if all_users:
+            return list(_mem_docs.values())
         if user_id:
             return [d for d in _mem_docs.values() if d.user_id == user_id]
         return [d for d in _mem_docs.values() if d.user_id is None]

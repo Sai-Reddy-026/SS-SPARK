@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # ---- Ensure local PaperQA project is importable ----
-    pqa_dir = cfg.PAPERQA_PROJECT_DIR or r"c:/Users/saidu/OneDrive/Desktop/ai_project/paper-qa/src"
+    pqa_dir = cfg.PAPERQA_PROJECT_DIR or str(Path(__file__).resolve().parent.parent / "paper-qa" / "src")
     pqa_src = Path(pqa_dir)
     if pqa_src.exists() and str(pqa_src) not in sys.path:
         sys.path.insert(0, str(pqa_src))
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
         logger.warning("Could not load saved settings: %s", exc)
 
     # ---- Re-index existing uploads into PaperQA connector on startup ----
-    existing_docs = await get_documents()
+    existing_docs = await get_documents(all_users=True)
     if existing_docs:
         logger.info(
             "Re-indexing %d existing documents into PaperQA...", len(existing_docs)

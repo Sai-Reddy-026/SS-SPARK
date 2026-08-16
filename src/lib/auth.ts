@@ -56,10 +56,13 @@ export interface AuthContextValue extends AuthState {
 // -------------------------------------------------------------------------- //
 
 const STORAGE_KEYS = {
-  ACCESS_TOKEN: "pg_access_token",
-  REFRESH_TOKEN: "pg_refresh_token",
-  USER: "pg_user",
-  GUEST: "pg_guest",
+  ACCESS_TOKEN: "ss_spark_access_token",
+  REFRESH_TOKEN: "ss_spark_refresh_token",
+  USER: "ss_spark_user",
+  GUEST: "ss_spark_guest",
+  LEGACY_ACCESS_TOKEN: "pg_access_token",
+  LEGACY_REFRESH_TOKEN: "pg_refresh_token",
+  LEGACY_USER: "pg_user",
 } as const;
 
 // -------------------------------------------------------------------------- //
@@ -68,7 +71,10 @@ const STORAGE_KEYS = {
 
 export function getStoredAccessToken(): string | null {
   try {
-    return localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+    return (
+      localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN) ??
+      localStorage.getItem(STORAGE_KEYS.LEGACY_ACCESS_TOKEN)
+    );
   } catch {
     return null;
   }
@@ -76,7 +82,10 @@ export function getStoredAccessToken(): string | null {
 
 export function getStoredRefreshToken(): string | null {
   try {
-    return localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+    return (
+      localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN) ??
+      localStorage.getItem(STORAGE_KEYS.LEGACY_REFRESH_TOKEN)
+    );
   } catch {
     return null;
   }

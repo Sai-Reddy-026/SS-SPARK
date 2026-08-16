@@ -49,7 +49,6 @@ pymongo>=4.7.0
 
 # ── Utilities ────────────────────────────────────────────────
 aiofiles>=23.2.1
-httpx>=0.27.0
 
 # ── Authentication ───────────────────────────────────────────
 # NOTE: passlib 1.7.4 is INCOMPATIBLE with bcrypt 4+/5+ (API change broke

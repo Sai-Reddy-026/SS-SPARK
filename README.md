@@ -5,13 +5,13 @@
 </p>
 
 <p align="center">
-  <b>A full-stack, enterprise-grade AI workspace designed for analyzing previous question papers, notes, and textbooks with cited, document-grounded answers.</b>
+  <b>A full-stack, production-grade AI workspace designed for analyzing previous question papers, notes, and textbooks with cited, document-grounded answers.</b>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Frontend-React_19_+_Vite-61DAFB?style=flat-square&logo=react" alt="React" />
   <img src="https://img.shields.io/badge/Router-TanStack_Router-FF4154?style=flat-square&logo=tanstack" alt="TanStack Router" />
-  <img src="https://img.shields.io/badge/Backend-FastAPI_0.138-009688?style=flat-square&logo=fastapi" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi" alt="FastAPI" />
   <img src="https://img.shields.io/badge/Database-MongoDB-47A248?style=flat-square&logo=mongodb" alt="MongoDB" />
   <img src="https://img.shields.io/badge/Vector_DB-Qdrant_|_ChromaDB-FF6B00?style=flat-square" alt="Vector DB" />
   <img src="https://img.shields.io/badge/RAG_Engine-PaperQA_+_LiteLLM-7C6FF7?style=flat-square" alt="RAG" />
@@ -22,39 +22,56 @@
 
 ## 🚀 Key Features
 
-- **Document Analysis & OCR**: Drag-and-drop support for PDF, DOCX, TXT, PPTX, and image formats (PNG, JPG, WEBP) with automatic Optical Character Recognition (OCR).
-- **Hybrid RAG Pipeline**: Combines **PaperQA**'s agentic document synthesis, **Qdrant / ChromaDB** vector search, and direct LLM answering for general conversation.
-- **Strictly Grounded Citations**: Every answer derived from your documents includes direct source references, page numbers, extracted snippets, and confidence percentages.
-- **ChatGPT-Style UI**: Sleek dark mode, syntax-highlighted code blocks, streaming message effects, collapsible sidebars, and question topic breakdown charts.
-- **Full Authentication & Multi-Turn Memory**: JWT bearer tokens, bcrypt password hashing with SHA-256 pre-hashing, multi-session organization, and conversation context memory.
-- **Admin & Monitoring Dashboard**: User management, system health metrics, security audit logs, and AI rate limiting controls.
+- **Multi-Format Ingestion & OCR**: Native drag-and-drop parsing for PDF, DOCX, TXT, PPTX, and image formats (PNG, JPG, WEBP) with automatic Tesseract OCR text extraction.
+- **Hybrid RAG Pipeline**: Intelligent query router uniting **PaperQA** agentic document synthesis, **Qdrant / ChromaDB** vector search, and direct conversational LLMs (Gemini, OpenAI, Claude).
+- **Strictly Grounded Citations**: Answers derived from uploaded papers feature source references, page numbers, extracted snippets, and confidence scores.
+- **Modern Academic UI**: Sleek dark mode, responsive drawer panels, syntax-highlighted code blocks, streaming message effects, and document analytics.
+- **Security & Multi-Tenant Isolation**: JWT tokens, bcrypt with SHA-256 pre-hashing, multi-session management, and tenant-isolated vector filtering.
+- **Admin Dashboard**: System telemetry, document storage tracking, user administration, and AI rate limiting controls.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Repository Architecture
 
 ```text
-ss-spark/
-├── frontend (src/)          # React 19 + TypeScript + TanStack Router + TailwindCSS
-│   ├── components/          # Reusable UI, analyzer components, admin panels
-│   ├── routes/              # File-based routing (chat, auth, admin dashboard)
-│   ├── lib/                 # Typed API client, AuthProvider, state helpers
-│   └── styles.css           # Modern design tokens, gradients & glassmorphism
+SS-SPARK/
+├── backend/                 # FastAPI REST API & RAG Engine
+│   ├── api/                 # Endpoints (auth, upload, chat, documents, admin, sessions)
+│   ├── core/                # Configuration (pydantic-settings), Security & CORS
+│   ├── database/            # MongoDB models, indexes, and persistence layer
+│   ├── rag/                 # RAG engine (embeddings, Qdrant/ChromaDB store, PaperQA)
+│   ├── services/            # Document chunking, OCR, chat orchestration
+│   ├── uploads/             # Local upload storage (.gitkeep)
+│   ├── main.py              # Application entry point & lifespan manager
+│   ├── requirements.txt     # Python backend dependencies
+│   ├── start.py             # Pre-flight dev runner
+│   └── test_e2e.py          # Automated verification test suite
 │
-├── backend/                 # FastAPI Python Backend
-│   ├── api/                 # Modular API routes (auth, upload, chat, sessions, admin)
-│   ├── core/                # Configuration (pydantic-settings) & Security (JWT, bcrypt)
-│   ├── database/            # MongoDB persistence (Motor async client, indexes)
-│   ├── rag/                 # RAG engine (PaperQA connector, VectorStore, Embeddings)
-│   ├── services/            # Document parsing, chunking, OCR, and email dispatch
-│   └── main.py              # Application entry point & lifespan manager
+├── docs/                    # Production Technical Documentation
+│   ├── ARCHITECTURE.md      # Architecture diagrams, RAG pipeline & sequence flows
+│   ├── DEPLOYMENT.md        # Step-by-step Vercel, Render, Atlas & Qdrant setup
+│   └── API_REFERENCE.md     # Complete REST API endpoint reference
+│
+├── paper-qa/                # PaperQA Engine Source
+│   ├── src/paperqa/         # Core PaperQA package source
+│   ├── packages/            # PaperQA pypdf extensions
+│   └── pyproject.toml
 │
 ├── public/                  # Static assets & brand icons
-├── Dockerfile               # Multi-stage production container
+├── src/                     # React 19 Frontend (TanStack Start / Vite)
+│   ├── components/          # UI components, analyzer panel, admin sidebar
+│   ├── hooks/               # Custom React hooks
+│   ├── lib/                 # Typed API client, AuthProvider, state helpers
+│   ├── routes/              # TanStack Start file-based routing
+│   └── styles.css           # Modern design system & TailwindCSS tokens
+│
+├── .env.example             # Frontend environment template
 ├── docker-compose.yml       # Production/local stack (Backend + MongoDB + Qdrant)
-├── vercel.json              # Vercel SPA deployment configuration
-├── render.yaml              # Render web service deployment blueprint
-└── README.md                # Project documentation
+├── Dockerfile               # Production multi-stage Docker build for backend
+├── package.json             # Frontend dependencies & npm scripts
+├── package-lock.json        # Deterministic npm lockfile
+├── render.yaml              # Render Blueprints Infrastructure-as-Code
+└── vercel.json              # Vercel deployment configuration
 ```
 
 ---
@@ -63,10 +80,10 @@ ss-spark/
 
 | Layer | Technology |
 | :--- | :--- |
-| **Frontend** | React 19, TypeScript, Vite, TanStack Router, TanStack Query, TailwindCSS |
+| **Frontend** | React 19, TypeScript, Vite, TanStack Router, TanStack Query, TailwindCSS v4 |
 | **Backend** | Python 3.12, FastAPI, Uvicorn, Pydantic v2, Pydantic Settings |
 | **Database** | MongoDB (Motor async driver) |
-| **Vector Search** | Qdrant / ChromaDB |
+| **Vector Search** | Qdrant Cloud / ChromaDB |
 | **RAG & AI** | PaperQA, LiteLLM (Gemini 2.0 Flash, OpenAI GPT-4o, Anthropic Claude) |
 | **Document Processing** | PyMuPDF (fitz), python-docx, python-pptx, pytesseract, Pillow |
 | **Authentication** | JWT (python-jose), bcrypt password hashing |
@@ -78,36 +95,37 @@ ss-spark/
 ### 1. Prerequisites
 - **Node.js** (v18+) & **npm**
 - **Python** (3.11+)
-- **MongoDB** (running locally on port `27017` or a MongoDB Atlas URI)
+- **MongoDB** (running locally on port `27017` or MongoDB Atlas URI)
 
 ### 2. Backend Setup
 ```bash
-# Navigate to backend directory
+# Navigate to backend
 cd backend
 
-# Install Python dependencies
+# Install dependencies
 pip install -r requirements.txt
 
 # Configure environment variables
 cp .env.example .env
-# Edit .env with your GEMINI_API_KEY, OPENAI_API_KEY, or other LLM keys
+# Open .env and set your GEMINI_API_KEY, OPENAI_API_KEY, or other LLM keys
 
-# Start FastAPI server (runs on http://localhost:8000)
+# Start backend server (runs on http://localhost:8000)
 python start.py
 ```
 
-Swagger API documentation will be accessible at: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Swagger API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+- API Health Check: [http://localhost:8000/health](http://localhost:8000/health)
 
 ### 3. Frontend Setup
 ```bash
-# From the project root
+# From project root
 npm install
 
 # Start Vite dev server (runs on http://localhost:8080)
 npm run dev
 ```
 
-Open your browser at: [http://localhost:8080](http://localhost:8080)
+Open browser at: [http://localhost:8080](http://localhost:8080)
 
 ---
 
@@ -123,10 +141,19 @@ docker compose up -d --build
 
 ## 🌐 Production Deployment
 
-Refer to the complete [DEPLOYMENT.md](DEPLOYMENT.md) for step-by-step instructions on deploying:
+Refer to the complete [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for step-by-step guides on deploying:
 - **Frontend** → Vercel
-- **Backend** → Render / Railway
+- **Backend** → Render / Railway / Docker
 - **Database** → MongoDB Atlas
+- **Vector Store** → Qdrant Cloud
+
+---
+
+## 📚 Documentation Links
+
+- [System Architecture & Pipelines](docs/ARCHITECTURE.md)
+- [Production Deployment Guide](docs/DEPLOYMENT.md)
+- [REST API Reference](docs/API_REFERENCE.md)
 
 ---
 

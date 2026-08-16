@@ -39,6 +39,7 @@ async function _getValidToken(): Promise<string | null> {
     if (response.ok) {
       const data = await response.json();
       const newAccess: string = data.data.access_token;
+      localStorage.setItem("ss_spark_access_token", newAccess);
       localStorage.setItem("pg_access_token", newAccess);
       return newAccess;
     }

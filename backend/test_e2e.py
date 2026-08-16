@@ -1,7 +1,7 @@
 """
 backend/test_e2e.py
 ===================
-Phase 1-8 end-to-end verification script for PaperGenius.
+End-to-end verification script for SS SPARK.
 
 Run from the backend/ directory:
     cd backend
@@ -169,13 +169,13 @@ def test_pdf_extraction() -> None:
     try:
         import fitz  # PyMuPDF
 
-        tmp = Path(tempfile.gettempdir()) / "pg_test_paper.pdf"
+        tmp = Path(tempfile.gettempdir()) / "ss_spark_test_paper.pdf"
         doc = fitz.open()  # new empty PDF
         page = doc.new_page()
         page.insert_text(
             (72, 72),
             (
-                "PaperGenius Test Question Paper\n\n"
+                "SS SPARK Test Question Paper\n\n"
                 "Q1. What is the capital of France?\n"
                 "Answer: The capital of France is Paris.\n\n"
                 "Q2. What is photosynthesis?\n"
@@ -413,7 +413,7 @@ def test_backend_config() -> None:
 
 async def main() -> None:
     print("=" * 60)
-    print("  PaperGenius — End-to-End Verification Script")
+    print("  SS SPARK — End-to-End Verification Script")
     print("=" * 60)
 
     test_deps()

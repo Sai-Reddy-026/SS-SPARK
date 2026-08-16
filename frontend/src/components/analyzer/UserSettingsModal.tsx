@@ -239,6 +239,20 @@ export function UserSettingsModal({
               </h4>
 
               <div className="grid gap-3 sm:grid-cols-2">
+                {user?.role === "admin" && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      onOpenChange(false);
+                      navigate({ to: "/admin" });
+                    }}
+                    className="h-11 justify-start gap-2.5 rounded-xl border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 sm:col-span-2"
+                  >
+                    <Shield className="h-4 w-4" />
+                    <span className="font-semibold">Open Admin Control Panel</span>
+                  </Button>
+                )}
+
                 <Button
                   variant="outline"
                   onClick={handleAddAccount}

@@ -9,6 +9,7 @@ import {
   PanelLeftOpen,
   Search,
   Settings,
+  Shield,
   History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -250,6 +251,20 @@ export function AnalyzerSidebar({
       </ScrollArea>
 
       <div className="mt-auto space-y-1 border-t p-3">
+        {user?.role === "admin" && (
+          <Link
+            to="/admin"
+            className={cn(
+              "flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/10",
+              !open && "justify-center",
+            )}
+            title="Admin Dashboard"
+          >
+            <Shield className="h-4 w-4 shrink-0 text-primary" />
+            {open && <span>Admin Dashboard</span>}
+          </Link>
+        )}
+
         <button
           onClick={onOpenSettings}
           className={cn(

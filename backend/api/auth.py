@@ -16,11 +16,13 @@ from core.security import (
     create_refresh_token,
     decode_token,
     get_current_user,
+    get_optional_user,
     hash_password,
     verify_password,
 )
 from database.user_models import (
     AuthProvider,
+    LogAction,
     UserRecord,
     UserRole,
     UserStatus,
@@ -124,7 +126,7 @@ async def register(req: RegisterRequest):
     access_token = create_access_token({"sub": created.id, "email": created.email, "role": created.role})
     refresh_token = create_refresh_token({"sub": created.id, "email": created.email})
 
-    await record_audit_log(created.id, "register", f"User registered with email: {created.email}")
+    await record_audit_log(created.id, LogAction.REGISTER, f"User registered with email: {created.email}")
 
     return {
         "success": True,
@@ -144,7 +146,7 @@ async def login(req: LoginRequest):
         )
 
     if not verify_password(req.password, user.hashed_password):
-        await record_audit_log(user.id, "login_failed", "Failed password attempt")
+        await record_audit_log(user.id, LogAction.LOGIN_FAILED, "Failed password attempt")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -159,7 +161,7 @@ async def login(req: LoginRequest):
     access_token = create_access_token({"sub": user.id, "email": user.email, "role": user.role})
     refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
 
-    await record_audit_log(user.id, "login", "User logged in successfully")
+    await record_audit_log(user.id, LogAction.LOGIN, "User logged in successfully")
 
     return {
         "success": True,
@@ -245,7 +247,7 @@ async def reset_password(req: ResetPasswordRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token or user.")
 
     await update_user(user.id, {"hashed_password": hash_password(req.new_password)})
-    await record_audit_log(user.id, "password_reset", "Password reset successfully")
+    await record_audit_log(user.id, LogAction.PASSWORD_RESET, "Password reset successfully")
     return {
         "success": True,
         "message": "Password has been successfully updated. You can now log in.",
@@ -269,11 +271,150 @@ async def verify_email(req: VerifyEmailRequest):
 
 
 @router.post("/logout")
-async def logout(current_user: Optional[UserRecord] = Depends(get_current_user)):
-    """Log out current user."""
+async def logout(current_user: Optional[UserRecord] = Depends(get_optional_user)):
+    """Log out current user (works with or without a valid token)."""
     if current_user:
-        await record_audit_log(current_user.id, "logout", "User logged out")
+        await record_audit_log(current_user.id, LogAction.LOGOUT, "User logged out")
     return {
         "success": True,
         "message": "Logged out successfully.",
     }
+
+
+# --------------------------------------------------------------------------- #
+# OAuth Endpoints
+# --------------------------------------------------------------------------- #
+
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+import urllib.parse
+import httpx
+from core.config import get_settings
+from database.user_models import get_user_by_provider
+
+
+@router.get("/oauth/config")
+async def oauth_config():
+    """Return public OAuth configuration status without exposing secrets."""
+    cfg = get_settings()
+    return {
+        "success": True,
+        "data": {
+            "google_enabled": cfg.has_oauth_google,
+            "github_enabled": cfg.has_oauth_github,
+            "google_client_id": cfg.GOOGLE_CLIENT_ID if cfg.has_oauth_google else "",
+        },
+    }
+
+
+@router.get("/oauth/google")
+async def oauth_google_redirect(request: Request):
+    """Redirect to Google OAuth consent screen or redirect to login with clear error if not configured."""
+    cfg = get_settings()
+    frontend_url = cfg.FRONTEND_URL.rstrip("/")
+    if not cfg.has_oauth_google:
+        return RedirectResponse(
+            url=f"{frontend_url}/login?error={urllib.parse.quote('Google OAuth is not configured in backend .env. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or use email/password login.')}"
+        )
+
+    redirect_uri = f"{str(request.base_url).rstrip('/')}/api/auth/oauth/google/callback"
+    params = {
+        "client_id": cfg.GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(url=url)
+
+
+@router.get("/oauth/google/callback")
+async def oauth_google_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
+    """Handle Google OAuth callback and redirect to frontend with tokens in hash fragment."""
+    cfg = get_settings()
+    frontend_url = cfg.FRONTEND_URL.rstrip("/")
+
+    if error or not code:
+        err_msg = error or "Authorization code missing"
+        return RedirectResponse(url=f"{frontend_url}/login?error={urllib.parse.quote(err_msg)}")
+
+    redirect_uri = f"{str(request.base_url).rstrip('/')}/api/auth/oauth/google/callback"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            token_resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": cfg.GOOGLE_CLIENT_ID,
+                    "client_secret": cfg.GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+            if token_resp.status_code != 200:
+                logger.error("Google token exchange failed: %s", token_resp.text)
+                return RedirectResponse(url=f"{frontend_url}/login?error=Google+token+exchange+failed")
+
+            token_data = token_resp.json()
+            access_tok = token_data.get("access_token")
+
+            userinfo_resp = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {access_tok}"},
+            )
+            if userinfo_resp.status_code != 200:
+                logger.error("Google userinfo fetch failed: %s", userinfo_resp.text)
+                return RedirectResponse(url=f"{frontend_url}/login?error=Failed+to+fetch+user+profile")
+
+            userinfo = userinfo_resp.json()
+            google_id = str(userinfo.get("id"))
+            email = (userinfo.get("email") or "").lower().strip()
+            name = userinfo.get("name") or email.split("@")[0]
+            picture = userinfo.get("picture") or ""
+
+            if not email:
+                return RedirectResponse(url=f"{frontend_url}/login?error=Google+account+missing+email")
+
+            user = await get_user_by_provider(AuthProvider.GOOGLE, google_id)
+            if not user:
+                user = await get_user_by_email(email)
+                if user:
+                    await update_user(user.id, {
+                        "provider": AuthProvider.GOOGLE.value,
+                        "provider_id": google_id,
+                        "avatar_url": user.avatar_url or picture,
+                        "email_verified": True,
+                    })
+                    user = await get_user_by_id(user.id)
+                else:
+                    new_user = UserRecord(
+                        email=email,
+                        full_name=name,
+                        avatar_url=picture,
+                        provider=AuthProvider.GOOGLE,
+                        provider_id=google_id,
+                        email_verified=True,
+                        role=UserRole.USER,
+                        status=UserStatus.ACTIVE,
+                    )
+                    user = await create_user(new_user)
+
+            if not user:
+                return RedirectResponse(url=f"{frontend_url}/login?error=Failed+to+create+user")
+
+            role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
+            jwt_access = create_access_token({"sub": user.id, "email": user.email, "role": role_val})
+            jwt_refresh = create_refresh_token({"sub": user.id, "email": user.email})
+
+            await record_audit_log(user.id, LogAction.LOGIN, "User logged in via Google OAuth")
+
+            return RedirectResponse(
+                url=f"{frontend_url}/auth/callback#access_token={jwt_access}&refresh_token={jwt_refresh}"
+            )
+    except Exception as e:
+        logger.exception("Unexpected OAuth error: %s", e)
+        return RedirectResponse(url=f"{frontend_url}/login?error={urllib.parse.quote(str(e))}")
+

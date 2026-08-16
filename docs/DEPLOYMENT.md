@@ -67,9 +67,11 @@ Render / Docker / VPS (SS SPARK FastAPI Backend)
 ### Step 4: Frontend Deployment (Vercel)
 1. In [Vercel Dashboard](https://vercel.com/new), click **Add New → Project** and import `SS-SPARK`.
 2. Configure **Build & Development Settings**:
+   - **Root Directory:** `frontend`
    - **Framework Preset:** `Vite`
    - **Build Command:** `npm run build`
    - **Output Directory:** `.output/public`
+   *(Alternatively, if deploying without Root Directory, the root `vercel.json` automatically orchestrates `cd frontend && npm run build` into `frontend/.output/public`)*.
 3. Add **Environment Variable**:
    - `VITE_API_URL` = `https://ss-spark-api.onrender.com`
 4. Click **Deploy**.

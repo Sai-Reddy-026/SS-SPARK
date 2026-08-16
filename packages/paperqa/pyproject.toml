@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paper-qa"
+version = "5.0.0"
+description = "PaperQA LLM Chain for answering questions from documents with citations"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anyio",
+    "html2text",
+    "httpx",
+    "numpy",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "rich",
+    "tenacity",
+    "tiktoken>=0.4.0",
+    "litellm>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["paperqa*"]

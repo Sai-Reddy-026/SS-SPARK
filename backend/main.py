@@ -61,12 +61,6 @@ async def lifespan(app: FastAPI):
     logger.info("  Swagger UI: http://localhost:%d/docs", cfg.PORT)
     logger.info("=" * 60)
 
-    # ---- Ensure local PaperQA project is importable ----
-    pqa_dir = cfg.PAPERQA_PROJECT_DIR or str(Path(__file__).resolve().parent.parent / "paper-qa" / "src")
-    pqa_src = Path(pqa_dir)
-    if pqa_src.exists() and str(pqa_src) not in sys.path:
-        sys.path.insert(0, str(pqa_src))
-        logger.info("Added PaperQA src to sys.path: %s", pqa_src)
 
     # ---- MongoDB ----
     await init_db(cfg.MONGO_URI, cfg.MONGO_DB_NAME)
@@ -298,6 +292,7 @@ app.mount("/uploads", StaticFiles(directory=str(_cfg.UPLOAD_DIR)), name="uploads
 # --------------------------------------------------------------------------- #
 
 @app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
 async def health():
     """Quick health-check endpoint."""
     from rag import paperqa_connector as pqa

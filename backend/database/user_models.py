@@ -561,14 +561,25 @@ async def get_daily_activity(days: int = 30) -> List[Dict[str, Any]]:
     return sorted(day_map.values(), key=lambda x: x["date"])
 
 
-async def record_audit_log(user_id: Optional[str], action: str, detail: str, ip_address: Optional[str] = None) -> None:
-    """Convenience helper to record an audit log."""
-    log = AuditLog(user_id=user_id, action=action, detail=detail, ip_address=ip_address)
-    db = _get_db()
-    if db is not None:
-        await create_audit_log(log)
-    else:
-        _mem_logs.append(log)
+async def record_audit_log(user_id: Optional[str], action: Any, detail: str, ip_address: Optional[str] = None) -> None:
+    """Convenience helper to record an audit log without interrupting the calling operation."""
+    try:
+        if isinstance(action, str):
+            try:
+                action_enum = LogAction(action)
+            except ValueError:
+                action_enum = LogAction.LOGIN  # fallback
+        else:
+            action_enum = action
+
+        log = AuditLog(user_id=user_id, action=action_enum, detail=detail, ip_address=ip_address)
+        db = _get_db()
+        if db is not None:
+            await create_audit_log(log)
+        else:
+            _mem_logs.append(log)
+    except Exception as exc:
+        logger.warning("Failed to record audit log (non-fatal): %s", exc)
 
 
 async def get_audit_logs(

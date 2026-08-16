@@ -53,3 +53,55 @@ async def update_me(
         "success": True,
         "message": "Profile updated successfully.",
     }
+
+
+class UserApiKeysRequest(BaseModel):
+    openai_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+
+
+@router.get("/settings")
+async def get_user_settings(current_user: UserRecord = Depends(get_current_user)):
+    """Return status of configured LLM API keys."""
+    from core.config import get_settings
+    cfg = get_settings()
+    return {
+        "success": True,
+        "data": {
+            "has_openai": cfg.has_openai,
+            "has_gemini": cfg.has_gemini,
+            "has_anthropic": cfg.has_anthropic,
+        },
+    }
+
+
+@router.post("/settings")
+async def update_user_settings(
+    req: UserApiKeysRequest,
+    current_user: UserRecord = Depends(get_current_user),
+):
+    """Save user API keys and activate them in the runtime environment."""
+    from core.security import update_api_keys
+    from database.models import load_settings, save_settings, SystemSettings
+
+    settings = await load_settings() or SystemSettings()
+    if req.openai_api_key is not None:
+        settings.openai_api_key = req.openai_api_key
+    if req.gemini_api_key is not None:
+        settings.gemini_api_key = req.gemini_api_key
+    if req.anthropic_api_key is not None:
+        settings.anthropic_api_key = req.anthropic_api_key
+
+    await save_settings(settings)
+    update_api_keys(
+        openai_api_key=req.openai_api_key,
+        gemini_api_key=req.gemini_api_key,
+        anthropic_api_key=req.anthropic_api_key,
+    )
+
+    return {
+        "success": True,
+        "message": "API keys saved successfully.",
+    }
+

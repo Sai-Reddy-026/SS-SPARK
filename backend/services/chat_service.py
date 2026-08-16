@@ -298,28 +298,29 @@ async def ask_question(
     # ------------------------------------------------------------------ #
     if user_id:
         try:
-            from database import user_models
+            from database import models
             from datetime import datetime, timezone
 
-            existing_sess = await user_models.get_session_by_id(sid)
+            existing_sess = await models.get_session_by_id(sid, user_id=user_id)
             if not existing_sess:
                 clean_title = question.strip().replace("\n", " ")
                 if len(clean_title) > 40:
                     clean_title = clean_title[:37] + "..."
-                new_sess = user_models.ChatSession(
+                new_sess = models.ChatSession(
                     id=sid,
                     user_id=user_id,
                     title=clean_title or "New Chat",
                     message_count=2,
                 )
-                await user_models.create_session(new_sess)
+                await models.create_session(new_sess)
             else:
-                await user_models.update_session(
+                await models.update_session(
                     sid,
                     {
                         "message_count": (existing_sess.message_count or 0) + 2,
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
                     },
+                    user_id=user_id,
                 )
         except Exception as sess_err:
             logger.warning("Failed to upsert chat session record (non-fatal): %s", sess_err)

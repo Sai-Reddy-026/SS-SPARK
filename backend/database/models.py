@@ -35,96 +35,27 @@ _mem_settings: Optional[SystemSettings] = None
 
 
 # --------------------------------------------------------------------------- #
-# Pydantic Models
+# --------------------------------------------------------------------------- #
+# Pydantic Models (Imported & re-exported from schemas)
 # --------------------------------------------------------------------------- #
 
-class CitationItem(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    source: str = ""
-    page: int = 1
-    snippet: str = ""
-    relevance: float = 0.0
-
-
-# Backward compatibility alias
-Citation = CitationItem
-
-
-class UploadedDoc(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    kind: str = "pdf"
-    size_mb: float = 0.0
-    pages: int = 1
-    chunk_count: int = 0
-    file_path: str = ""
-    user_id: Optional[str] = None
-    uploaded_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
-
-
-class ChatMessage(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    session_id: str
-    role: str  # "user" | "assistant"
-    content: str
-    user_id: Optional[str] = None
-    confidence: Optional[float] = None
-    citations: List[CitationItem] = Field(default_factory=list)
-    references: str = ""
-    status: str = "success"  # "success" | "partial" | "unsure" | "general" | "error"
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
-
-
-class ChatSession(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    user_id: str
-    title: str = "New Chat"
-    pinned: bool = False
-    archived: bool = False
-    folder: Optional[str] = None
-    message_count: int = 0
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
-    updated_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
-
-
-class SystemSettings(BaseModel):
-    id: str = "global_settings"
-    ocr_engine: str = "tesseract"
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    llm_model: str = "gemini-2.0-flash"
-    chunk_size: int = 500
-    chunk_overlap: int = 50
-    max_upload_size_mb: int = 50
-    allowed_file_types: List[str] = Field(
-        default_factory=lambda: [".pdf", ".docx", ".txt", ".png", ".jpg", ".jpeg", ".webp"]
-    )
-    rate_limit_requests_per_minute: int = 60
-    maintenance_mode: bool = False
-    openai_api_key: Optional[str] = None
-    gemini_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    updated_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+from schemas.chat import CitationItem, Citation, ChatMessage, ChatSession
+from schemas.document import UploadedDoc
+from schemas.admin import SystemSettings
 
 
 # --------------------------------------------------------------------------- #
 # Database Initialization
 # --------------------------------------------------------------------------- #
 
+import re
+
 async def init_db(mongo_uri: str, db_name: str = "ss_spark") -> None:
     """Connect to MongoDB and configure indexes on collections."""
     global _client, _db
     try:
-        logger.info("Connecting to MongoDB at: %s (db: %s)", mongo_uri, db_name)
+        masked_uri = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", mongo_uri)
+        logger.info("Connecting to MongoDB at: %s (db: %s)", masked_uri, db_name)
         _client = AsyncIOMotorClient(
             mongo_uri,
             serverSelectionTimeoutMS=5000,

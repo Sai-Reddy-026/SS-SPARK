@@ -26,16 +26,35 @@ logger = logging.getLogger(__name__)
 
 def _get_candidate_models() -> list[str]:
     """Return a priority list of litellm model names based on available API keys."""
+    models: list[str] = []
     if os.getenv("OPENAI_API_KEY", ""):
-        return ["gpt-4o-mini", "gpt-4o"]
-    if os.getenv("GEMINI_API_KEY", ""):
-        key = os.getenv("GEMINI_API_KEY", "")
+        models.extend(["gpt-4o-mini", "gpt-4o"])
+    if os.getenv("NVIDIA_API_KEY", "") or os.getenv("NVIDIA_NIM_API_KEY", ""):
+        n_key = os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY", "")
+        os.environ.setdefault("NVIDIA_API_KEY", n_key)
+        os.environ.setdefault("NVIDIA_NIM_API_KEY", n_key)
+        models.extend([
+            "nvidia_nim/meta/llama-3.1-8b-instruct",
+            "nvidia_nim/meta/llama-3.3-70b-instruct",
+            "nvidia_nim/meta/llama-3.1-70b-instruct",
+        ])
+    if os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""):
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+        os.environ.setdefault("GEMINI_API_KEY", key)
         os.environ.setdefault("GOOGLE_API_KEY", key)
-        return ["gemini/gemini-flash-latest", "gemini/gemini-3.7-flash", "gemini/gemini-pro-latest"]
+        models.extend([
+            "gemini/gemini-3.5-flash",
+            "gemini/gemini-3.7-flash",
+            "gemini/gemini-flash-lite-latest",
+        ])
     if os.getenv("ANTHROPIC_API_KEY", ""):
-        return ["claude-3-5-haiku-20241022"]
+        models.extend(["claude-3-5-haiku-20241022"])
+
+    if models:
+        return models
+
     raise RuntimeError(
-        "No LLM API key found. Set OPENAI_API_KEY, GEMINI_API_KEY, or "
+        "No LLM API key found. Set OPENAI_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, or "
         "ANTHROPIC_API_KEY in your backend/.env file."
     )
 
@@ -117,6 +136,7 @@ async def general_chat(
                 messages=messages,
                 temperature=0.7,
                 max_tokens=2048,
+                timeout=12.0,
             )
             answer = response.choices[0].message.content or ""
             cost = 0.0

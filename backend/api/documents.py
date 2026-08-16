@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from core.security import get_optional_user
 from database.models import delete_document, get_document_by_id, get_documents, rename_document
-from database.user_models import UserRecord
+from database.user_models import LogAction, UserRecord, record_audit_log
 from rag.vector_store import get_vector_store
 
 logger = logging.getLogger("ss_spark.documents_api")
@@ -78,6 +78,12 @@ async def delete_doc(
 
     # 3. Delete database record
     await delete_document(doc_id, user_id=user_id)
+    if current_user:
+        await record_audit_log(
+            current_user.id,
+            LogAction.DELETE_DOCUMENT,
+            f"Deleted document: {doc.name} ({doc.size_mb} MB)",
+        )
 
     return {
         "success": True,

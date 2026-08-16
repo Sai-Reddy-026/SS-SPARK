@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from core.config import Settings, get_settings
 from core.security import get_optional_user
 from database.models import UploadedDoc, save_document
-from database.user_models import UserRecord
+from database.user_models import LogAction, UserRecord, record_audit_log
 from rag import paperqa_connector as pqa
 from rag.embeddings import get_embedder
 from rag.vector_store import get_vector_store
@@ -133,6 +133,12 @@ async def upload_documents(
             user_id=current_user.id if current_user else None,
         )
         await save_document(doc_record)
+        if current_user:
+            await record_audit_log(
+                current_user.id,
+                LogAction.UPLOAD,
+                f"Uploaded document: {filename} ({file_size_mb} MB, {pages_count} pages)",
+            )
 
         uploaded_results.append({
             "id": doc_id,

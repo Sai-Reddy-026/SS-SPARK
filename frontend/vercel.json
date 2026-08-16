@@ -1,7 +1,7 @@
 {
   "framework": "vite",
-  "buildCommand": "cd frontend && npm install && npm run build",
-  "outputDirectory": "frontend/.output/public",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".output/public",
   "rewrites": [
     {
       "source": "/(.*)",

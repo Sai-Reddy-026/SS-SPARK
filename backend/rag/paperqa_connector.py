@@ -56,12 +56,13 @@ def _build_settings():
         from paperqa import Settings
     except ImportError as exc:
         raise RuntimeError(
-            "PaperQA is not installed or importable. Ensure paper-qa/src is on sys.path or installed via pip."
+            "PaperQA is not installed or importable. Ensure packages/paperqa is installed via pip."
         ) from exc
 
     openai_key = os.getenv("OPENAI_API_KEY", "")
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    nvidia_key = os.getenv("NVIDIA_API_KEY", "") or os.getenv("NVIDIA_NIM_API_KEY", "")
 
     # Pick the best available LLM
     if openai_key:
@@ -69,18 +70,24 @@ def _build_settings():
         embed_name = "text-embedding-3-small"
         logger.info("PaperQA connector: using OpenAI (model=%s)", llm_name)
     elif gemini_key:
-        llm_name = "gemini/gemini-flash-latest"
+        llm_name = "gemini/gemini-3.5-flash"
         embed_name = "gemini/gemini-embedding-001"
         os.environ["GEMINI_API_KEY"] = gemini_key
         os.environ["GOOGLE_API_KEY"] = gemini_key  # litellm also reads GOOGLE_API_KEY
         logger.info("PaperQA connector: using Gemini (model=%s)", llm_name)
+    elif nvidia_key:
+        llm_name = "nvidia_nim/meta/llama-3.3-70b-instruct"
+        embed_name = "text-embedding-3-small"
+        os.environ["NVIDIA_API_KEY"] = nvidia_key
+        os.environ["NVIDIA_NIM_API_KEY"] = nvidia_key
+        logger.info("PaperQA connector: using NVIDIA NIM (model=%s)", llm_name)
     elif anthropic_key:
         llm_name = "claude-3-5-haiku-20241022"
         embed_name = "text-embedding-3-small"  # Anthropic has no embedding API; fallback
         logger.info("PaperQA connector: using Anthropic (model=%s)", llm_name)
     else:
         raise RuntimeError(
-            "No LLM API key found. Set OPENAI_API_KEY, GEMINI_API_KEY, "
+            "No LLM API key found. Set OPENAI_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, "
             "or ANTHROPIC_API_KEY in your .env file."
         )
 

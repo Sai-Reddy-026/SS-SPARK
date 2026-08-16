@@ -25,11 +25,15 @@ from database.models import (
     save_settings,
 )
 from database.user_models import (
+    LogAction,
+    Notification,
     UserRecord,
     UserRole,
     UserStatus,
+    create_notification,
     delete_user,
     get_audit_logs,
+    get_global_stats,
     get_user_by_id,
     list_users,
     record_audit_log,
@@ -88,7 +92,7 @@ async def admin_list_users(
             "email_verified": u.email_verified,
             "provider": u.provider.value if hasattr(u.provider, "value") else str(u.provider),
             "created_at": u.created_at,
-            "last_login": u.last_login_at,
+            "last_login": getattr(u, "last_login", None),
             "total_documents": 0,
             "total_questions": 0,
             "storage_used_mb": 0.0,
@@ -125,6 +129,7 @@ async def admin_delete_user(user_id: str):
     deleted = await delete_user(user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="User not found.")
+    await record_audit_log(user_id, LogAction.ADMIN_ACTION, "User account deleted by administrator")
     return {"success": True, "message": "User deleted."}
 
 
@@ -132,6 +137,7 @@ async def admin_delete_user(user_id: str):
 async def admin_suspend_user(user_id: str):
     """Suspend a user account."""
     await update_user(user_id, {"status": UserStatus.SUSPENDED.value})
+    await record_audit_log(user_id, LogAction.SUSPEND, "User account suspended by administrator")
     return {"success": True, "message": "User suspended."}
 
 
@@ -139,6 +145,7 @@ async def admin_suspend_user(user_id: str):
 async def admin_activate_user(user_id: str):
     """Activate a suspended user."""
     await update_user(user_id, {"status": UserStatus.ACTIVE.value})
+    await record_audit_log(user_id, LogAction.ACTIVATE, "User account activated by administrator")
     return {"success": True, "message": "User activated."}
 
 
@@ -148,6 +155,7 @@ async def admin_change_role(user_id: str, req: RoleChangeRequest):
     if req.role not in ("user", "admin"):
         raise HTTPException(status_code=400, detail="Invalid role.")
     await update_user(user_id, {"role": req.role})
+    await record_audit_log(user_id, LogAction.ROLE_CHANGE, f"User role changed to {req.role} by administrator")
     return {"success": True, "message": f"Role updated to {req.role}."}
 
 
@@ -201,21 +209,10 @@ async def admin_reindex_doc(doc_id: str):
 @router.get("/analytics")
 async def admin_global_analytics():
     """Global system-wide usage metrics."""
-    users, total_users = await list_users(limit=1000)
-    docs = await get_documents()
-    total_storage = sum(d.size_mb for d in docs)
-
+    stats = await get_global_stats()
     return {
         "success": True,
-        "data": {
-            "total_users": total_users,
-            "active_users": len([u for u in users if u.status == UserStatus.ACTIVE]),
-            "total_sessions": 24,
-            "total_documents": len(docs),
-            "total_questions": 142,
-            "total_storage_mb": round(total_storage, 2),
-            "new_users_last_7_days": len(users),
-        },
+        "data": stats,
     }
 
 
@@ -300,7 +297,15 @@ async def admin_update_settings(updates: Dict[str, Any]):
 @router.post("/notifications")
 async def admin_broadcast_notification(req: NotificationBroadcastRequest):
     """Send or broadcast an in-app notification."""
+    notif = Notification(
+        user_id=req.user_id or "broadcast",
+        title=req.title,
+        body=req.body,
+        kind=req.kind or "announcement",
+    )
+    await create_notification(notif)
     return {
         "success": True,
         "message": "Notification broadcasted successfully.",
+        "data": notif.model_dump(),
     }

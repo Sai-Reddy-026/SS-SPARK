@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,12 +40,15 @@ class Settings(BaseSettings):
     # MED-8: GOOGLE_API_KEY is the alias LiteLLM uses for Gemini — keep in sync with GEMINI_API_KEY
     GOOGLE_API_KEY: str = Field(default="", description="Google API key (alias for GEMINI_API_KEY, used by LiteLLM)")
     ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic Claude API key")
+    NVIDIA_API_KEY: str = Field(default="", description="NVIDIA NIM API key")
+    NVIDIA_NIM_API_KEY: str = Field(default="", description="NVIDIA NIM API key (alias)")
 
     # ------------------------------------------------------------------ #
     # JWT Authentication
     # ------------------------------------------------------------------ #
     JWT_SECRET_KEY: str = Field(
         default="changeme-please-use-a-long-random-secret-in-production",
+        validation_alias=AliasChoices("JWT_SECRET_KEY", "JWT_SECRET"),
         description="Secret key for signing JWT tokens. MUST be overridden in production.",
     )
     JWT_ALGORITHM: str = Field(default="HS256")
@@ -82,6 +85,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     MONGO_URI: str = Field(
         default="mongodb://localhost:27017",
+        validation_alias=AliasChoices("MONGO_URI", "MONGODB_URI"),
         description="MongoDB connection URI",
     )
     MONGO_DB_NAME: str = Field(default="ss_spark", description="MongoDB database name")
@@ -187,11 +191,15 @@ class Settings(BaseSettings):
         return bool(self.ANTHROPIC_API_KEY)
 
     @property
+    def has_nvidia(self) -> bool:
+        return bool(self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY)
+
+    @property
     def has_any_llm_key(self) -> bool:
-        return self.has_openai or self.has_gemini or self.has_anthropic
+        return self.has_openai or self.has_gemini or self.has_anthropic or self.has_nvidia
 
     def apply_to_env(self) -> None:
-        """Push API keys back into os.environ so PaperQA picks them up."""
+        """Push API keys back into os.environ so PaperQA and LiteLLM pick them up."""
         if self.OPENAI_API_KEY:
             os.environ["OPENAI_API_KEY"] = self.OPENAI_API_KEY
         if self.GEMINI_API_KEY:
@@ -204,6 +212,10 @@ class Settings(BaseSettings):
             os.environ["GEMINI_API_KEY"] = self.GOOGLE_API_KEY
         if self.ANTHROPIC_API_KEY:
             os.environ["ANTHROPIC_API_KEY"] = self.ANTHROPIC_API_KEY
+        if self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY:
+            n_key = self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY
+            os.environ["NVIDIA_API_KEY"] = n_key
+            os.environ["NVIDIA_NIM_API_KEY"] = n_key
 
 
 @lru_cache(maxsize=1)

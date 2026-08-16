@@ -35,41 +35,45 @@
 
 ```text
 SS-SPARK/
+├── frontend/                # React 19 Frontend (TanStack Start / Vite)
+│   ├── public/              # Static assets & brand icons
+│   ├── src/
+│   │   ├── components/      # UI components, analyzer panel, admin sidebar
+│   │   ├── hooks/           # Custom React hooks
+│   │   ├── lib/             # Typed API client, AuthProvider, state helpers
+│   │   ├── routes/          # TanStack Start file-based routing
+│   │   └── styles.css       # Design tokens & TailwindCSS v4 tokens
+│   ├── package.json         # Frontend dependencies & npm scripts
+│   ├── package-lock.json    # Deterministic npm lockfile
+│   ├── tsconfig.json        # TypeScript configuration
+│   └── vite.config.ts       # Vite & TanStack Start build configuration
+│
 ├── backend/                 # FastAPI REST API & RAG Engine
 │   ├── api/                 # Endpoints (auth, upload, chat, documents, admin, sessions)
 │   ├── core/                # Configuration (pydantic-settings), Security & CORS
 │   ├── database/            # MongoDB models, indexes, and persistence layer
+│   ├── schemas/             # Pydantic request/response validation schemas
 │   ├── rag/                 # RAG engine (embeddings, Qdrant/ChromaDB store, PaperQA)
 │   ├── services/            # Document chunking, OCR, chat orchestration
+│   ├── tests/               # Automated test suite (test_e2e.py)
 │   ├── uploads/             # Local upload storage (.gitkeep)
 │   ├── main.py              # Application entry point & lifespan manager
 │   ├── requirements.txt     # Python backend dependencies
-│   ├── start.py             # Pre-flight dev runner
-│   └── test_e2e.py          # Automated verification test suite
+│   └── start.py             # Pre-flight dev runner
+│
+├── packages/                # Internal Reusable Packages
+│   └── paperqa/             # Clean PaperQA Core Engine Package
+│       ├── paperqa/         # Core Python package source
+│       └── pyproject.toml   # Standard package build definition
 │
 ├── docs/                    # Production Technical Documentation
 │   ├── ARCHITECTURE.md      # Architecture diagrams, RAG pipeline & sequence flows
 │   ├── DEPLOYMENT.md        # Step-by-step Vercel, Render, Atlas & Qdrant setup
 │   └── API_REFERENCE.md     # Complete REST API endpoint reference
 │
-├── paper-qa/                # PaperQA Engine Source
-│   ├── src/paperqa/         # Core PaperQA package source
-│   ├── packages/            # PaperQA pypdf extensions
-│   └── pyproject.toml
-│
-├── public/                  # Static assets & brand icons
-├── src/                     # React 19 Frontend (TanStack Start / Vite)
-│   ├── components/          # UI components, analyzer panel, admin sidebar
-│   ├── hooks/               # Custom React hooks
-│   ├── lib/                 # Typed API client, AuthProvider, state helpers
-│   ├── routes/              # TanStack Start file-based routing
-│   └── styles.css           # Modern design system & TailwindCSS tokens
-│
-├── .env.example             # Frontend environment template
+├── .env.example             # Environment template
 ├── docker-compose.yml       # Production/local stack (Backend + MongoDB + Qdrant)
 ├── Dockerfile               # Production multi-stage Docker build for backend
-├── package.json             # Frontend dependencies & npm scripts
-├── package-lock.json        # Deterministic npm lockfile
 ├── render.yaml              # Render Blueprints Infrastructure-as-Code
 └── vercel.json              # Vercel deployment configuration
 ```
@@ -118,7 +122,10 @@ python start.py
 
 ### 3. Frontend Setup
 ```bash
-# From project root
+# Navigate to frontend
+cd frontend
+
+# Install dependencies
 npm install
 
 # Start Vite dev server (runs on http://localhost:8080)

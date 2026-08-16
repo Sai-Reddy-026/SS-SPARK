@@ -3,11 +3,13 @@ backend/create_admin.py
 CLI utility to create a new Admin account or promote an existing user to Admin in SS SPARK / PaperGenius.
 
 Usage:
-  python create_admin.py --email admin@ssspark.ai --password AdminPassword123! --name "Administrator"
+  python create_admin.py --email admin@ssspark.ai --name "Administrator"
+  python create_admin.py --email admin@ssspark.ai --password "<secure-password>" --name "Administrator"
   python create_admin.py --promote user@example.com
 """
 
 import sys
+import getpass
 import argparse
 import asyncio
 from pathlib import Path
@@ -40,7 +42,7 @@ async def main():
 
     parser = argparse.ArgumentParser(description="Create or promote an Admin account for SS SPARK.")
     parser.add_argument("--email", type=str, help="Email address for the admin account")
-    parser.add_argument("--password", type=str, help="Password for the admin account")
+    parser.add_argument("--password", type=str, help="Password for the admin account (or prompted securely)")
     parser.add_argument("--name", type=str, default="Administrator", help="Display name for the admin")
     parser.add_argument("--promote", type=str, help="Email of an existing user to promote to Admin")
 
@@ -57,11 +59,38 @@ async def main():
         print(f"[+] Successfully promoted '{email}' ({existing.full_name}) to role: {UserRole.ADMIN.value}!")
         return
 
-    email = args.email or "admin@ssspark.ai"
-    password = args.password or "Admin@12345"
-    name = args.name or "System Admin"
+    email = (args.email or "").strip().lower()
+    if not email:
+        try:
+            email = input("Admin Email: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[-] Operation cancelled.")
+            sys.exit(1)
 
-    email = email.lower().strip()
+    if not email:
+        print("[-] Email is required.")
+        sys.exit(1)
+
+    password = args.password
+    if not password:
+        try:
+            password = getpass.getpass("Enter Admin Password: ")
+            if not password:
+                print("[-] Password cannot be empty.")
+                sys.exit(1)
+            confirm = getpass.getpass("Confirm Admin Password: ")
+            if password != confirm:
+                print("[-] Passwords do not match.")
+                sys.exit(1)
+        except (EOFError, KeyboardInterrupt):
+            print("\n[-] Operation cancelled.")
+            sys.exit(1)
+
+    if not password:
+        print("[-] Password cannot be empty.")
+        sys.exit(1)
+
+    name = args.name or "System Admin"
     existing = await get_user_by_email(email)
 
     if existing:
@@ -71,7 +100,7 @@ async def main():
             "hashed_password": hash_password(password),
             "full_name": name,
         })
-        print(f"[+] Existing user '{email}' updated with role: ADMIN and new password.")
+        print(f"[+] Existing user '{email}' updated with role: ADMIN and new hashed password.")
     else:
         new_admin = UserRecord(
             email=email,
@@ -86,8 +115,9 @@ async def main():
         print(f"    - ID:       {created.id}")
 
     print(f"    - Email:    {email}")
-    print(f"    - Password: {password}")
     print(f"    - Role:     admin")
+    print(f"    - Status:   active")
+    print(f"    - Security: Password hashed (bcrypt + SHA-256)")
     print(f"    - Portal:   http://localhost:8080/admin (or /login)")
 
 

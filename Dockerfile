@@ -19,7 +19,8 @@ WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
-# Copy backend source code
+# Copy PaperQA engine and backend source code
+COPY paper-qa /app/paper-qa
 COPY backend /app/backend
 
 WORKDIR /app/backend

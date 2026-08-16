@@ -9,6 +9,7 @@ interface NavbarProps {
   theme: "dark" | "light";
   onToggleTheme: () => void;
   docCount: number;
+  onOpenSearchPad?: () => void;
 }
 
 export function Navbar({
@@ -18,6 +19,7 @@ export function Navbar({
   theme,
   onToggleTheme,
   docCount,
+  onOpenSearchPad,
 }: NavbarProps) {
   return (
     <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b bg-background/60 px-3 py-2.5 backdrop-blur-xl sm:px-5">
@@ -33,10 +35,16 @@ export function Navbar({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        <Badge variant="secondary" className="hidden gap-1 sm:flex">
-          <Sparkles className="h-3 w-3 text-chart-2" />
-          {docCount} sources
-        </Badge>
+        <button
+          onClick={onOpenSearchPad}
+          title="Open Document Search Pad"
+          className="hidden sm:inline-flex"
+        >
+          <Badge variant="secondary" className="gap-1 cursor-pointer hover:bg-secondary/80 transition-colors">
+            <Sparkles className="h-3 w-3 text-chart-2" />
+            {docCount} source{docCount === 1 ? "" : "s"}
+          </Badge>
+        </button>
         <Button variant="ghost" size="icon" onClick={onToggleTheme} aria-label="Toggle color theme">
           {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>

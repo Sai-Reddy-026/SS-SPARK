@@ -257,10 +257,12 @@ export interface DocumentResponse {
 
 export interface UploadResponse {
   id: string;
+  name?: string;
   filename: string;
   kind: string;
   size_mb: number;
   pages: number;
+  chunk_count?: number;
   chunks_indexed: number;
   paperqa_indexed: boolean;
   uploaded_at: string;

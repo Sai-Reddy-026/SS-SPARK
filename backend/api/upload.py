@@ -146,10 +146,12 @@ async def upload_documents(
 
         uploaded_results.append({
             "id": doc_id,
+            "name": filename,
             "filename": filename,
             "kind": kind,
             "size_mb": file_size_mb,
             "pages": pages_count,
+            "chunk_count": chunks_indexed,
             "chunks_indexed": chunks_indexed,
             "paperqa_indexed": pqa_indexed,
             "uploaded_at": doc_record.uploaded_at,

@@ -65,6 +65,18 @@ export function AnalyzerSidebar({
     );
   }, [chats, search]);
 
+  // Dynamic document search filter (Search Pad)
+  const filteredDocs = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return docs;
+    return docs.filter(
+      (doc) =>
+        doc.name.toLowerCase().includes(term) ||
+        doc.typeLabel.toLowerCase().includes(term) ||
+        doc.kind.toLowerCase().includes(term),
+    );
+  }, [docs, search]);
+
   // Dynamic user profile info
   const userName = isAuthenticated && user
     ? user.full_name.trim() || user.email.split("@")[0]
@@ -150,7 +162,7 @@ export function AnalyzerSidebar({
           <Input
             value={search}
             onChange={(event) => onSearch(event.target.value)}
-            placeholder="Search chats"
+            placeholder="Search chats & documents..."
             className="h-9 bg-background/50 pl-9 text-sm"
           />
         </div>
@@ -184,7 +196,7 @@ export function AnalyzerSidebar({
               </button>
             ))}
             {open && filteredChats.length === 0 && (
-              <p className="px-2.5 py-3 text-xs text-muted-foreground">
+              <p className="px-2.5 py-2 text-xs text-muted-foreground">
                 {search ? "No matching chats found." : "No recent chats yet."}
               </p>
             )}
@@ -192,13 +204,23 @@ export function AnalyzerSidebar({
 
           <Separator className="my-4" />
 
-          <SectionLabel open={open} icon={FileText} label="Uploaded documents" />
+          <div className="flex items-center justify-between px-2.5 pb-2">
+            <SectionLabel open={open} icon={FileText} label={`Documents (${filteredDocs.length})`} />
+            {open && (
+              <button
+                onClick={onUpload}
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                + Add
+              </button>
+            )}
+          </div>
           <div className="space-y-1">
-            {docs.slice(0, 6).map((doc) => (
+            {filteredDocs.map((doc) => (
               <div
                 key={doc.id}
                 title={doc.name}
-                className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60"
+                className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
               >
                 {doc.kind === "image" ? (
                   <ImageIcon className="h-4 w-4 shrink-0 text-chart-2" />
@@ -206,21 +228,21 @@ export function AnalyzerSidebar({
                   <FileText className="h-4 w-4 shrink-0 text-chart-1" />
                 )}
                 {open && (
-                  <span className="min-w-0">
-                    <span className="block truncate text-foreground/90">{doc.name}</span>
-                    <span className="block truncate text-[11px]">
-                      {doc.pages} pages · {formatTime(doc.uploadedAt)}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-foreground/90">{doc.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {doc.pages} page{doc.pages === 1 ? "" : "s"} · {formatTime(doc.uploadedAt)}
                     </span>
                   </span>
                 )}
               </div>
             ))}
-            {open && docs.length === 0 && (
+            {open && filteredDocs.length === 0 && (
               <button
                 onClick={onUpload}
                 className="w-full rounded-xl border border-dashed px-2.5 py-3 text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground"
               >
-                No documents yet — upload to begin
+                {search ? "No matching documents found." : "No documents yet — upload to begin"}
               </button>
             )}
           </div>

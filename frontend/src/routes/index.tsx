@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalyzerSidebar, type SidebarChat } from "@/components/analyzer/AnalyzerSidebar";
 import { UserSettingsModal } from "@/components/analyzer/UserSettingsModal";
+import { SearchPadModal } from "@/components/analyzer/SearchPadModal";
 import { Navbar } from "@/components/analyzer/Navbar";
 import { ChatMessage, TypingIndicator } from "@/components/analyzer/ChatMessage";
 import { ChatComposer } from "@/components/analyzer/ChatComposer";
@@ -21,7 +22,7 @@ import {
 } from "@/lib/analyzer";
 import { useAuth } from "@/lib/auth";
 import { chatApi, documentsApi, sessionsApi, type SessionResponse } from "@/lib/api";
-import { BrainCircuit, FileText, Sparkles } from "lucide-react";
+import { BrainCircuit, FileText, Sparkles, Search } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -70,6 +71,7 @@ function AnalyzerPage() {
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchPadOpen, setSearchPadOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Track blob URLs for cleanup to prevent memory leaks
@@ -183,16 +185,40 @@ function AnalyzerPage() {
     }
   }
 
-  const removeDoc = useCallback((docId: string) => {
-    setDocs((current) => {
-      const removing = current.find((d) => d.id === docId);
-      if (removing?.previewUrl && blobUrlsRef.current.has(removing.previewUrl)) {
-        URL.revokeObjectURL(removing.previewUrl);
-        blobUrlsRef.current.delete(removing.previewUrl);
+  const removeDoc = useCallback(
+    async (docId: string) => {
+      let previousDocs: UploadedDoc[] = [];
+      let removedDoc: UploadedDoc | undefined;
+
+      setDocs((current) => {
+        previousDocs = current;
+        removedDoc = current.find((d) => d.id === docId);
+        return current.filter((d) => d.id !== docId);
+      });
+
+      if (isAuthenticated) {
+        try {
+          await documentsApi.delete(docId);
+          if (removedDoc?.previewUrl && blobUrlsRef.current.has(removedDoc.previewUrl)) {
+            URL.revokeObjectURL(removedDoc.previewUrl);
+            blobUrlsRef.current.delete(removedDoc.previewUrl);
+          }
+          toast.success("Document removed from workspace");
+        } catch (err: unknown) {
+          // Revert optimistic removal on server failure
+          setDocs(previousDocs);
+          toast.error(err instanceof Error ? err.message : "Failed to delete document from server");
+        }
+      } else {
+        if (removedDoc?.previewUrl && blobUrlsRef.current.has(removedDoc.previewUrl)) {
+          URL.revokeObjectURL(removedDoc.previewUrl);
+          blobUrlsRef.current.delete(removedDoc.previewUrl);
+        }
+        toast.info("Document removed");
       }
-      return current.filter((d) => d.id !== docId);
-    });
-  }, []);
+    },
+    [isAuthenticated],
+  );
 
   async function addFiles(files: File[]) {
     if (files.length === 0) return;
@@ -225,16 +251,21 @@ function AnalyzerPage() {
 
         try {
           const result = await documentsApi.list();
-          const serverDocs: UploadedDoc[] = result.data.map((doc) => ({
-            id: doc.id,
-            name: doc.name,
-            kind: kindFromName(doc.name),
-            typeLabel: typeLabel(kindFromName(doc.name)),
-            uploadedAt: new Date(doc.uploaded_at),
-            pages: doc.pages,
-            previewUrl: undefined,
-          }));
-          setDocs(serverDocs);
+          setDocs((current) => {
+            const previewMap = new Map<string, string>();
+            current.forEach((d) => {
+              if (d.previewUrl) previewMap.set(d.name, d.previewUrl);
+            });
+            return result.data.map((doc) => ({
+              id: doc.id,
+              name: doc.name,
+              kind: kindFromName(doc.name),
+              typeLabel: typeLabel(kindFromName(doc.name)),
+              uploadedAt: new Date(doc.uploaded_at),
+              pages: doc.pages,
+              previewUrl: previewMap.get(doc.name),
+            }));
+          });
         } catch {
           // Non-fatal
         }
@@ -381,6 +412,7 @@ function AnalyzerPage() {
           theme={theme}
           onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
           docCount={docs.length}
+          onOpenSearchPad={() => setSearchPadOpen(true)}
         />
 
         {/* ── Scrollable chat area ── */}
@@ -423,10 +455,13 @@ function AnalyzerPage() {
 
               {/* Document count badge */}
               {docs.length > 0 && (
-                <p className="mt-6 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <button
+                  onClick={() => setSearchPadOpen(true)}
+                  className="mt-6 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                >
                   <FileText className="h-3.5 w-3.5 text-chart-1" />
-                  {docs.length} document{docs.length !== 1 ? "s" : ""} loaded
-                </p>
+                  {docs.length} document{docs.length !== 1 ? "s" : ""} loaded · Click to open Search Pad
+                </button>
               )}
             </div>
           )}
@@ -465,10 +500,7 @@ function AnalyzerPage() {
                     <UploadCard
                       key={doc.id}
                       doc={doc}
-                      onDelete={() => {
-                        removeDoc(doc.id);
-                        toast("Document removed");
-                      }}
+                      onDelete={() => removeDoc(doc.id)}
                     />
                   ))}
                   {fileDocs.length === 0 && (
@@ -480,10 +512,7 @@ function AnalyzerPage() {
                     <ImagePreviewCard
                       key={doc.id}
                       doc={doc}
-                      onDelete={() => {
-                        removeDoc(doc.id);
-                        toast("Image removed");
-                      }}
+                      onDelete={() => removeDoc(doc.id)}
                     />
                   ))}
                   {imageDocs.length === 0 && (
@@ -539,6 +568,18 @@ function AnalyzerPage() {
           />
         </DialogContent>
       </Dialog>
+
+      {/* ── Search Pad & Document Workspace Modal ── */}
+      <SearchPadModal
+        open={searchPadOpen}
+        onOpenChange={setSearchPadOpen}
+        docs={docs}
+        onUploadFiles={addFiles}
+        onDeleteDoc={removeDoc}
+        onAskAboutDoc={(docName) => {
+          setInput(`Tell me the main topics and important questions from ${docName}`);
+        }}
+      />
 
       {/* ── User Settings Modal ── */}
       <UserSettingsModal

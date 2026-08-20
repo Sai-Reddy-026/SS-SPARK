@@ -58,6 +58,14 @@ async def init_user_db(db: Any) -> None:
     # Notifications: per-user
     await _db.notifications.create_index([("user_id", 1), ("created_at", -1)])
 
+    # Password reset tokens: unique token_hash, user_id, and automatic TTL deletion on expires_at
+    try:
+        await _db.password_reset_tokens.create_index("token_hash", unique=True)
+        await _db.password_reset_tokens.create_index("user_id")
+        await _db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
+    except Exception as exc:
+        logger.warning("Password reset tokens index creation warning: %s", exc)
+
     logger.info("User DB indexes created.")
 
 
@@ -217,12 +225,16 @@ async def create_user(user: UserRecord) -> UserRecord:
 
 
 async def get_user_by_email(email: str) -> Optional[UserRecord]:
-    """Find a user by email (case-insensitive)."""
+    """Find a user by email (case-insensitive exact point lookup)."""
+    import re
+    target = email.lower().strip()
     db = _get_db()
     if db is not None:
-        doc = await db.users.find_one({"email": {"$regex": f"^{email}$", "$options": "i"}})
+        doc = await db.users.find_one({"email": target})
+        if not doc:
+            # Fallback for un-normalized legacy records
+            doc = await db.users.find_one({"email": {"$regex": f"^{re.escape(target)}$", "$options": "i"}})
         return _doc_to_user(doc) if doc else None
-    target = email.lower().strip()
     for u in _mem_users.values():
         if u.email.lower() == target:
             return u
@@ -475,28 +487,45 @@ async def update_system_settings(updates: dict) -> SystemSettings:
 # --------------------------------------------------------------------------- #
 
 async def get_global_stats() -> Dict[str, Any]:
-    """Return aggregate platform statistics for the admin dashboard."""
+    """Return aggregate platform statistics for the admin dashboard concurrently."""
+    import asyncio
+    from datetime import timedelta
     db = _get_db()
+    if db is None:
+        return {
+            "total_users": len(_mem_users),
+            "active_users": len([u for u in _mem_users.values() if u.status == UserStatus.ACTIVE]),
+            "total_sessions": len(_mem_sessions),
+            "total_documents": 0,
+            "total_questions": len([m for m in _mem_logs if m.action == LogAction.LOGIN]),
+            "total_storage_mb": 0.0,
+            "new_users_last_7_days": len(_mem_users),
+        }
 
-    total_users = await db.users.count_documents({})
-    active_users = await db.users.count_documents({"status": "active"})
-    total_sessions = await db.chat_sessions.count_documents({})
-
-    # Documents and questions from main models collection
-    total_docs = await db.documents.count_documents({})
-    total_questions = await db.messages.count_documents({"role": "user"})
-
-    # Storage
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     storage_pipeline = [
         {"$group": {"_id": None, "total": {"$sum": "$size_mb"}}}
     ]
-    storage_result = await db.documents.aggregate(storage_pipeline).to_list(1)
-    total_storage = storage_result[0]["total"] if storage_result else 0.0
 
-    # Registrations last 7 days
-    from datetime import timedelta
-    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-    new_users_week = await db.users.count_documents({"created_at": {"$gte": week_ago}})
+    (
+        total_users,
+        active_users,
+        total_sessions,
+        total_docs,
+        total_questions,
+        storage_result,
+        new_users_week,
+    ) = await asyncio.gather(
+        db.users.count_documents({}),
+        db.users.count_documents({"status": "active"}),
+        db.chat_sessions.count_documents({}),
+        db.documents.count_documents({}),
+        db.chat_messages.count_documents({"role": "user"}),
+        db.documents.aggregate(storage_pipeline).to_list(1),
+        db.users.count_documents({"created_at": {"$gte": week_ago}}),
+    )
+
+    total_storage = storage_result[0]["total"] if storage_result else 0.0
 
     return {
         "total_users": total_users,
@@ -511,8 +540,12 @@ async def get_global_stats() -> Dict[str, Any]:
 
 async def get_daily_activity(days: int = 30) -> List[Dict[str, Any]]:
     """Return per-day counts of messages and uploads for the past N days."""
+    import asyncio
     from datetime import timedelta
     db = _get_db()
+    if db is None:
+        return []
+
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
     pipeline = [
@@ -529,7 +562,6 @@ async def get_daily_activity(days: int = 30) -> List[Dict[str, Any]]:
         },
         {"$sort": {"_id": 1}},
     ]
-    msg_docs = await db.messages.aggregate(pipeline).to_list(length=days + 5)
 
     upload_pipeline = [
         {"$match": {"uploaded_at": {"$gte": since}}},
@@ -545,7 +577,11 @@ async def get_daily_activity(days: int = 30) -> List[Dict[str, Any]]:
         },
         {"$sort": {"_id": 1}},
     ]
-    upload_docs = await db.documents.aggregate(upload_pipeline).to_list(length=days + 5)
+
+    (msg_docs, upload_docs) = await asyncio.gather(
+        db.chat_messages.aggregate(pipeline).to_list(length=days + 5),
+        db.documents.aggregate(upload_pipeline).to_list(length=days + 5),
+    )
 
     # Merge into a single day-keyed dict
     day_map: dict[str, dict] = {}

@@ -124,14 +124,21 @@ export async function apiUpload<T = unknown>(
 
 export const authApi = {
   forgotPassword: (email: string) =>
-    apiFetch("/api/auth/forgot-password", {
+    apiFetch<{ success: boolean; message: string }>("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+      skipAuth: true,
+    }),
+
+  resendResetLink: (email: string) =>
+    apiFetch<{ success: boolean; message: string }>("/api/auth/resend-reset-link", {
       method: "POST",
       body: JSON.stringify({ email }),
       skipAuth: true,
     }),
 
   resetPassword: (token: string, newPassword: string) =>
-    apiFetch("/api/auth/reset-password", {
+    apiFetch<{ success: boolean; message: string }>("/api/auth/reset-password", {
       method: "POST",
       body: JSON.stringify({ token, new_password: newPassword }),
       skipAuth: true,
@@ -176,18 +183,160 @@ export const documentsApi = {
 // Chat API
 // -------------------------------------------------------------------------- //
 
+// -------------------------------------------------------------------------- //
+// SSE streaming types
+// -------------------------------------------------------------------------- //
+
+export type StreamPhase = "routing" | "retrieving" | "generating";
+
+export interface StreamCallbacks {
+  onSession?: (sessionId: string) => void;
+  onPhase?: (phase: StreamPhase) => void;
+  onToken?: (token: string) => void;
+  onMeta?: (meta: StreamMeta) => void;
+  onError?: (message: string) => void;
+  onDone?: () => void;
+}
+
+export interface StreamMeta {
+  session_id: string;
+  source: string;
+  page: number;
+  confidence: number | null;
+  citations: {
+    id: string;
+    source: string;
+    page: number;
+    snippet: string;
+    relevance: number;
+  }[];
+  references: string;
+  status: string;
+  cost: number;
+}
+
 export const chatApi = {
+  /** Non-streaming legacy JSON send. */
   send: (question: string, sessionId?: string) =>
-    apiFetch<ChatApiResponse>("/api/chat", {
+    apiFetch<ChatApiResponse>("/api/chat?stream=false", {
       method: "POST",
       body: JSON.stringify({ question, session_id: sessionId }),
     }),
+
+  /** Streaming SSE send. Reads the SSE stream and calls back as events arrive.
+   *  Returns an AbortController so the caller can cancel mid-stream. */
+  sendStream: (
+    question: string,
+    sessionId: string | undefined,
+    callbacks: StreamCallbacks,
+  ): AbortController => {
+    const controller = new AbortController();
+
+    (async () => {
+      let token: string | null = null;
+      try {
+        token = await _getValidToken();
+      } catch {
+        /* ignore */
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      let response: Response;
+      try {
+        response = await fetch(`${API_BASE}/api/chat?stream=true`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ question, session_id: sessionId }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
+        callbacks.onError?.(
+          `Cannot connect to backend at ${API_BASE}. Is the server running?`,
+        );
+        callbacks.onDone?.();
+        return;
+      }
+
+      if (!response.ok) {
+        callbacks.onError?.(`Server error: HTTP ${response.status}`);
+        callbacks.onDone?.();
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        callbacks.onError?.("No response body.");
+        callbacks.onDone?.();
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          // SSE lines: "data: {...}\n\n"
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const jsonStr = trimmed.slice(5).trim();
+            if (!jsonStr) continue;
+
+            let event: Record<string, unknown>;
+            try {
+              event = JSON.parse(jsonStr) as Record<string, unknown>;
+            } catch {
+              continue;
+            }
+
+            const type = event["type"] as string;
+            if (type === "session") {
+              callbacks.onSession?.(event["session_id"] as string);
+            } else if (type === "phase") {
+              callbacks.onPhase?.(event["phase"] as StreamPhase);
+            } else if (type === "token") {
+              callbacks.onToken?.(event["content"] as string);
+            } else if (type === "meta") {
+              callbacks.onMeta?.(event as unknown as StreamMeta);
+            } else if (type === "error") {
+              callbacks.onError?.(event["content"] as string);
+            } else if (type === "done") {
+              callbacks.onDone?.();
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
+        callbacks.onError?.("Stream connection lost.");
+      } finally {
+        reader.releaseLock();
+        callbacks.onDone?.();
+      }
+    })();
+
+    return controller;
+  },
 
   history: (sessionId: string, limit?: number) =>
     apiFetch<{ success: boolean; data: MessageResponse[] }>(
       `/api/history?session_id=${sessionId}${limit ? `&limit=${limit}` : ""}`,
     ),
 };
+
 
 // -------------------------------------------------------------------------- //
 // Sessions API
@@ -257,7 +406,7 @@ export interface DocumentResponse {
 
 export interface UploadResponse {
   id: string;
-  name?: string;
+  name: string;
   filename: string;
   kind: string;
   size_mb: number;

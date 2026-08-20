@@ -8,8 +8,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
+
 
 from core.security import (
     create_access_token,
@@ -33,6 +34,12 @@ from database.user_models import (
     update_user,
 )
 from services.notification_service import send_password_reset_email, send_verification_email
+from services.password_reset_service import (
+    TokenError,
+    check_rate_limit,
+    create_reset_token,
+    validate_and_consume_token,
+)
 
 logger = logging.getLogger("ss_spark.auth_api")
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -58,6 +65,10 @@ class RefreshRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResendResetRequest(BaseModel):
     email: str
 
 
@@ -236,36 +247,142 @@ async def update_profile(
 
 
 @router.post("/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest):
-    """Initiate a password reset flow."""
+async def forgot_password(req: ForgotPasswordRequest, request: Request):
+    """
+    Initiate a secure password-reset flow.
+
+    Security:
+    - Never reveals whether the email exists (anti-enumeration).
+    - Rate-limited: 3 requests per 10 minutes per email+IP.
+    - Token: cryptographically random, hashed in DB, expires 30 minutes, single-use.
+    """
+    logger.info("[forgot-password] Request received for email domain: %s",
+                req.email.split('@')[-1] if '@' in req.email else 'invalid')
+
+    # Rate-limit check (anti-abuse)
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else None)
+    allowed, retry_after = check_rate_limit(req.email, client_ip)
+    if not allowed:
+        logger.warning(
+            "[forgot-password] Rate limit hit for email domain: %s ip: %s",
+            req.email.split('@')[-1] if '@' in req.email else '?', client_ip
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many reset requests. Please wait {retry_after} seconds before trying again.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    # Look up user — do NOT short-circuit the response based on existence
     user = await get_user_by_email(req.email)
+    logger.info("[forgot-password] User lookup complete. Found: %s", user is not None)
+
     if user:
-        reset_tok = create_access_token({"sub": user.id, "action": "reset_password"})
-        await send_password_reset_email(user.email, reset_tok)
+        try:
+            # Generate secure single-use token
+            logger.info("[forgot-password] Generating reset token for user_id=%s", user.id)
+            raw_token = await create_reset_token(user.id, user.email)
+            logger.info("[forgot-password] Reset token generated and stored.")
+
+            # Send the email
+            logger.info("[forgot-password] Initiating email send to %s", user.email)
+            email_sent = await send_password_reset_email(user.email, raw_token)
+
+            if email_sent:
+                logger.info("[forgot-password] Email sent successfully.")
+            else:
+                logger.error(
+                    "[forgot-password] Email delivery failed for user_id=%s. "
+                    "Check EMAIL_PROVIDER / RESEND_API_KEY / SMTP settings.",
+                    user.id
+                )
+        except Exception as exc:
+            logger.exception("[forgot-password] Unexpected error during token/email: %s", exc)
+
+    # Always return the same generic response regardless of outcome
+    # This prevents account enumeration attacks
     return {
         "success": True,
-        "message": "If an account with this email exists, a password reset link has been dispatched.",
+        "message": "If an account exists for this email, a password reset link has been sent. Check your spam folder if you don't see it.",
+    }
+
+
+@router.post("/resend-reset-link")
+async def resend_reset_link(req: ResendResetRequest, request: Request):
+    """
+    Resend a password-reset email.
+
+    Subject to the same rate limit as /forgot-password.
+    Invalidates the previous token and issues a new one.
+    """
+    logger.info("[resend-reset] Request received")
+
+    client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else None)
+    allowed, retry_after = check_rate_limit(req.email, client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many requests. Please wait {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    user = await get_user_by_email(req.email)
+    if user:
+        try:
+            raw_token = await create_reset_token(user.id, user.email)
+            email_sent = await send_password_reset_email(user.email, raw_token)
+            if not email_sent:
+                logger.error("[resend-reset] Email delivery failed for user_id=%s", user.id)
+        except Exception as exc:
+            logger.exception("[resend-reset] Error: %s", exc)
+
+    return {
+        "success": True,
+        "message": "If an account exists for this email, a new reset link has been sent.",
     }
 
 
 @router.post("/reset-password")
 async def reset_password(req: ResetPasswordRequest):
-    """Reset password using a reset token and revoke existing refresh tokens."""
-    payload = decode_token(req.token)
-    user_id = payload.get("sub")
-    user = await get_user_by_id(user_id) if user_id else None
-    if not user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token or user.")
+    """
+    Reset password using a secure single-use token.
 
+    Security:
+    - Validates token hash against stored hash (never stores raw token).
+    - Checks expiry and consumed status.
+    - Revokes all existing sessions (token_version bump).
+    """
+    logger.info("[reset-password] Request received.")
+
+    try:
+        user_id = await validate_and_consume_token(req.token)
+    except TokenError as exc:
+        logger.info("[reset-password] Token validation failed: %s", str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+            headers={"X-Token-Expired": "true" if exc.is_expired else "false"},
+        ) from exc
+
+    user = await get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account not found."
+        )
+
+    # Update password and invalidate all existing sessions
     new_ver = getattr(user, "token_version", 1) + 1
     await update_user(user.id, {
         "hashed_password": hash_password(req.new_password),
         "token_version": new_ver,
     })
-    await record_audit_log(user.id, LogAction.PASSWORD_RESET, "Password reset successfully")
+    await record_audit_log(user.id, LogAction.PASSWORD_RESET, "Password reset via secure token")
+    logger.info("[reset-password] Password updated for user_id=%s", user_id)
+
     return {
         "success": True,
-        "message": "Password has been successfully updated. You can now log in.",
+        "message": "Your password has been reset successfully. You can now log in with your new password.",
     }
 
 

@@ -71,11 +71,13 @@ def _build_settings():
     anthropic_key = cfg.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY", "")
     nvidia_key = cfg.NVIDIA_API_KEY or os.getenv("NVIDIA_API_KEY", "") or os.getenv("NVIDIA_NIM_API_KEY", "")
 
+    from paperqa.settings import ParsingSettings
+
     # Pick embedding model based on available keys
     if openai_key:
         embed_name = "text-embedding-3-small"
     else:
-        embed_name = "all-MiniLM-L6-v2"
+        embed_name = "st-all-MiniLM-L6-v2"
 
     # Pick the best available LLM
     if openai_key:
@@ -100,10 +102,16 @@ def _build_settings():
             "or ANTHROPIC_API_KEY in your .env file."
         )
 
+    # Disable online journal queries (Crossref/Semantic Scholar) for fast local doc indexing
+    parsing_cfg = ParsingSettings(
+        use_doc_details=False,
+    )
+
     return Settings(
         llm=llm_name,
         summary_llm=llm_name,
         embedding=embed_name,
+        parsing=parsing_cfg,
     )
 
 
@@ -178,10 +186,11 @@ async def add_document(
     settings = _build_settings()
 
     try:
+        doc_citation = citation or f"{Path(file_path).name}"
         docname = await docs.aadd(
             path=file_path,
             settings=settings,
-            citation=citation,
+            citation=doc_citation,
         )
         if docname:
             _user_indexed_paths[uid].add(file_path)

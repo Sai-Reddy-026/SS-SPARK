@@ -60,7 +60,7 @@ class OpenAIEmbedder(BaseEmbedder):
 
 
 class GeminiEmbedder(BaseEmbedder):
-    """Google Gemini embeddings API."""
+    """Google Gemini embeddings API with concurrent batching."""
 
     def __init__(self, model: str = "models/text-embedding-004", api_key: Optional[str] = None):
         import google.generativeai as genai
@@ -70,12 +70,50 @@ class GeminiEmbedder(BaseEmbedder):
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         import google.generativeai as genai
+        from concurrent.futures import ThreadPoolExecutor
+
         if not texts:
             return []
-        results = []
-        for t in texts:
-            res = genai.embed_content(model=self.model, content=t)
-            results.append(res["embedding"])
+
+        # Single item fast-path
+        if len(texts) == 1:
+            try:
+                res = genai.embed_content(model=self.model, content=texts[0])
+                return [res["embedding"]]
+            except Exception as exc:
+                logger.warning("Gemini single embed failed: %s", exc)
+                return [[0.0] * 384]
+
+        # 1. Try native batch request (1 single HTTP roundtrip per 100 chunks)
+        try:
+            batch_size = 100
+            all_embeddings: List[List[float]] = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                res = genai.embed_content(model=self.model, content=batch)
+                emb = res.get("embedding", [])
+                if emb and isinstance(emb[0], float):
+                    all_embeddings.append(emb)
+                else:
+                    all_embeddings.extend(emb)
+            if len(all_embeddings) == len(texts):
+                return all_embeddings
+        except Exception as exc:
+            logger.debug("Gemini native batch embed fallback: %s", exc)
+
+        # 2. Fallback to bounded concurrent worker pool
+        def _embed_single(text: str) -> List[float]:
+            try:
+                res = genai.embed_content(model=self.model, content=text)
+                return res["embedding"]
+            except Exception as exc:
+                logger.warning("Gemini embed chunk failed: %s", exc)
+                return [0.0] * 384
+
+        max_workers = min(len(texts), 16)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(_embed_single, texts))
+
         return results
 
 

@@ -19,7 +19,7 @@ export const Route = createFileRoute("/auth/callback")({
 
 function AuthCallbackPage() {
   const navigate = useNavigate();
-  const { setTokens, isAdmin } = useAuth();
+  const { setTokens } = useAuth();
 
   useEffect(() => {
     // Parse tokens from URL hash fragment (set by backend after OAuth)

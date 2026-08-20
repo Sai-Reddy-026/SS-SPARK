@@ -80,118 +80,86 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Could not load saved settings: %s", exc)
 
-    # ---- Re-index existing uploads into PaperQA connector on startup ----
-    existing_docs = await get_documents(all_users=True)
-    if existing_docs:
-        logger.info(
-            "Re-indexing %d existing documents into PaperQA...", len(existing_docs)
-        )
-        for d in existing_docs:
-            if d.file_path and Path(d.file_path).exists():
-                await pqa.add_document(d.file_path, user_id=d.user_id)
-        logger.info("PaperQA startup re-indexing complete.")
-    else:
-        logger.info("No existing documents to re-index.")
-
-    # ---- P2: Qdrant consistency check — rebuild index if Qdrant is empty ----
-    if cfg.USE_QDRANT and existing_docs:
+    # ---- Non-blocking background startup document sync ----
+    async def _async_startup_sync():
         try:
-            import asyncio
-            from rag.vector_store import get_vector_store
-            from rag.embeddings import get_embedder
-            from services.pdf_service import extract_chunks
-            from services.image_service import process_image_to_chunks
-            from pathlib import Path as _Path
+            existing_docs = await get_documents(all_users=True)
+            if existing_docs:
+                logger.info("Re-indexing %d existing documents into PaperQA in background...", len(existing_docs))
+                startup_sem = asyncio.Semaphore(4)
 
-            vs = get_vector_store(str(cfg.CHROMA_DIR), cfg.CHROMA_COLLECTION)
-            qdrant_count = vs.count()
+                async def _reindex_single_doc(d):
+                    if d.file_path and Path(d.file_path).exists():
+                        async with startup_sem:
+                            await pqa.add_document(d.file_path, user_id=d.user_id)
 
-            if qdrant_count == 0:
-                logger.warning(
-                    "Qdrant collection is empty but MongoDB has %d documents. "
-                    "Rebuilding Qdrant index from disk...",
-                    len(existing_docs),
-                )
+                await asyncio.gather(*[_reindex_single_doc(d) for d in existing_docs])
+                logger.info("PaperQA background startup re-indexing complete.")
+
+            if cfg.USE_QDRANT and existing_docs:
                 try:
-                    embedder = get_embedder()
-                except Exception as emb_err:
-                    logger.warning(
-                        "Qdrant re-index skipped — embedder unavailable: %s", emb_err
-                    )
-                    embedder = None
+                    from rag.vector_store import get_vector_store
+                    from rag.embeddings import get_embedder
+                    from services.pdf_service import extract_chunks
+                    from services.image_service import process_image_to_chunks
+                    from pathlib import Path as _Path
 
-                if embedder:
-                    total_reindexed = 0
-                    for doc in existing_docs:
-                        file_path = doc.file_path
-                        if not file_path or not _Path(file_path).exists():
-                            logger.warning(
-                                "Qdrant re-index: skipping '%s' — file not found on disk.",
-                                doc.name,
-                            )
-                            continue
+                    vs = get_vector_store(str(cfg.CHROMA_DIR), cfg.CHROMA_COLLECTION)
+                    qdrant_count = vs.count()
+
+                    if qdrant_count == 0:
+                        logger.warning("Qdrant collection empty. Rebuilding in background from %d docs...", len(existing_docs))
                         try:
-                            suffix = _Path(file_path).suffix.lower()
-                            if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-                                # Image: re-use the OCR sidecar if present
-                                sidecar = _Path(file_path).parent / (
-                                    _Path(file_path).stem + "_ocr.txt"
-                                )
-                                if not sidecar.exists():
-                                    logger.warning(
-                                        "Qdrant re-index: OCR sidecar missing for '%s' — skipping.",
-                                        doc.name,
-                                    )
+                            embedder = get_embedder()
+                        except Exception as emb_err:
+                            logger.warning("Qdrant re-index skipped — embedder unavailable: %s", emb_err)
+                            embedder = None
+
+                        if embedder:
+                            total_reindexed = 0
+                            for doc in existing_docs:
+                                file_path = doc.file_path
+                                if not file_path or not _Path(file_path).exists():
                                     continue
-                                _, chunks = process_image_to_chunks(
-                                    file_path, doc.id,
-                                    str(cfg.UPLOAD_DIR),
-                                    cfg.CHUNK_SIZE, cfg.CHUNK_OVERLAP,
-                                )
-                            else:
-                                chunks = extract_chunks(
-                                    file_path, doc.id,
-                                    cfg.CHUNK_SIZE, cfg.CHUNK_OVERLAP,
-                                )
+                                try:
+                                    suffix = _Path(file_path).suffix.lower()
+                                    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+                                        sidecar = _Path(file_path).parent / (_Path(file_path).stem + "_ocr.txt")
+                                        if not sidecar.exists():
+                                            continue
+                                        _, chunks = process_image_to_chunks(
+                                            file_path, doc.id, str(cfg.UPLOAD_DIR), cfg.CHUNK_SIZE, cfg.CHUNK_OVERLAP
+                                        )
+                                    else:
+                                        chunks = extract_chunks(file_path, doc.id, cfg.CHUNK_SIZE, cfg.CHUNK_OVERLAP)
 
-                            if not chunks:
-                                continue
+                                    if not chunks:
+                                        continue
 
-                            texts = [c.text for c in chunks]
-                            pages = [c.page for c in chunks]
-                            embeddings = await asyncio.to_thread(embedder.embed, texts)
-                            vs.add_chunks(
-                                doc_id=doc.id,
-                                source_name=doc.name,
-                                chunks=texts,
-                                embeddings=embeddings,
-                                pages=pages,
-                                user_id=doc.user_id,   # preserve original ownership
-                            )
-                            total_reindexed += len(chunks)
-                            logger.info(
-                                "Qdrant re-indexed '%s': %d chunks (user_id=%s)",
-                                doc.name, len(chunks), doc.user_id,
-                            )
-                        except Exception as doc_err:
-                            logger.warning(
-                                "Qdrant re-index failed for '%s': %s", doc.name, doc_err
-                            )
+                                    texts = [c.text for c in chunks]
+                                    pages = [c.page for c in chunks]
+                                    embeddings = await asyncio.to_thread(embedder.embed, texts)
+                                    vs.add_chunks(
+                                        doc_id=doc.id,
+                                        source_name=doc.name,
+                                        chunks=texts,
+                                        embeddings=embeddings,
+                                        pages=pages,
+                                        user_id=doc.user_id,
+                                    )
+                                    total_reindexed += len(chunks)
+                                except Exception as doc_err:
+                                    logger.warning("Qdrant re-index failed for '%s': %s", doc.name, doc_err)
 
-                    logger.info(
-                        "Qdrant re-index complete: %d total chunks across %d documents.",
-                        total_reindexed, len(existing_docs),
-                    )
-            else:
-                logger.info(
-                    "Qdrant already contains %d vectors — no re-indexing needed.", qdrant_count
-                )
-        except Exception as qdrant_startup_err:
-            logger.warning(
-                "Qdrant startup consistency check failed (non-fatal): %s", qdrant_startup_err
-            )
+                            logger.info("Qdrant background re-index complete: %d chunks across %d docs.", total_reindexed, len(existing_docs))
+                except Exception as qdrant_startup_err:
+                    logger.warning("Qdrant startup check failed: %s", qdrant_startup_err)
+        except Exception as sync_err:
+            logger.warning("Background startup sync error: %s", sync_err)
 
-    logger.info("Backend ready ✓  —  PaperQA + Qdrant active")
+    asyncio.create_task(_async_startup_sync())
+
+    logger.info("Backend ready ✓  —  FastAPI running, background sync active")
     yield
 
     # Shutdown

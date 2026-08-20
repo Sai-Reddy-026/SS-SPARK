@@ -64,13 +64,16 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str = Field(default="", description="GitHub OAuth app client secret")
 
     # ------------------------------------------------------------------ #
-    # Email / SMTP (for verification & password reset)
+    # Email / SMTP / Resend (for verification & password reset)
     # ------------------------------------------------------------------ #
+    EMAIL_PROVIDER: str = Field(default="", description="Email provider: 'resend', 'smtp', or 'log'")
+    EMAIL_FROM: str = Field(default="noreply@ssspark.ai", description="From address for emails")
+    RESEND_API_KEY: str = Field(default="", description="Resend.com API key (if using Resend)")
     SMTP_HOST: str = Field(default="", description="SMTP server hostname")
     SMTP_PORT: int = Field(default=587, description="SMTP port")
     SMTP_USER: str = Field(default="", description="SMTP username")
     SMTP_PASS: str = Field(default="", description="SMTP password")
-    SMTP_FROM: str = Field(default="noreply@ssspark.ai", description="From address for emails")
+    SMTP_FROM: str = Field(default="noreply@ssspark.ai", description="Legacy alias for EMAIL_FROM")
 
     # ------------------------------------------------------------------ #
     # Frontend URL (used in email links)

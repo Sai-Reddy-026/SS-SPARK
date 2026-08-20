@@ -1,15 +1,12 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, lazy, Suspense } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalyzerSidebar, type SidebarChat } from "@/components/analyzer/AnalyzerSidebar";
-import { UserSettingsModal } from "@/components/analyzer/UserSettingsModal";
-import { SearchPadModal } from "@/components/analyzer/SearchPadModal";
 import { Navbar } from "@/components/analyzer/Navbar";
 import { ChatMessage, TypingIndicator } from "@/components/analyzer/ChatMessage";
 import { ChatComposer } from "@/components/analyzer/ChatComposer";
-import { AnalyzerPanel } from "@/components/analyzer/AnalyzerPanel";
 import { UploadCard, ImagePreviewCard } from "@/components/analyzer/UploadCard";
 import { UploadDropzone } from "@/components/analyzer/UploadDropzone";
 import {
@@ -21,30 +18,51 @@ import {
   type UploadedDoc,
 } from "@/lib/analyzer";
 import { useAuth } from "@/lib/auth";
-import { chatApi, documentsApi, sessionsApi, type SessionResponse } from "@/lib/api";
-import { BrainCircuit, FileText, Sparkles, Search } from "lucide-react";
+import {
+  chatApi,
+  documentsApi,
+  sessionsApi,
+  type SessionResponse,
+  type StreamMeta,
+} from "@/lib/api";
+import { BrainCircuit, FileText, Sparkles } from "lucide-react";
 
-export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "AI Question Paper Analyzer | SS SPARK" },
-      {
-        name: "description",
-        content:
-          "Upload previous question papers, notes and textbooks, then ask questions and get AI answers grounded only in your documents.",
-      },
-      { property: "og:title", content: "AI Question Paper Analyzer | SS SPARK" },
-      {
-        property: "og:description",
-        content:
-          "A premium AI workspace for analyzing question papers, notes and textbooks with cited, document-grounded answers.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
-  component: AnalyzerPage,
-});
+// Code-split heavy chart and modal dependencies
+const AnalyzerPanel = lazy(() => import("@/components/analyzer/AnalyzerPanel"));
+const UserSettingsModal = lazy(() =>
+  import("@/components/analyzer/UserSettingsModal").then((m) => ({ default: m.UserSettingsModal })),
+);
+const SearchPadModal = lazy(() =>
+  import("@/components/analyzer/SearchPadModal").then((m) => ({ default: m.SearchPadModal })),
+);
+
+export const Route = createFileRoute("/")(
+  Object.assign(
+    {}
+    ,
+    {
+      head: () => ({
+        meta: [
+          { title: "AI Question Paper Analyzer | SS SPARK" },
+          {
+            name: "description",
+            content:
+              "Upload previous question papers, notes and textbooks, then ask questions and get AI answers grounded only in your documents.",
+          },
+          { property: "og:title", content: "AI Question Paper Analyzer | SS SPARK" },
+          {
+            property: "og:description",
+            content:
+              "A premium AI workspace for analyzing question papers, notes and textbooks with cited, document-grounded answers.",
+          },
+          { property: "og:type", content: "website" },
+          { name: "twitter:card", content: "summary_large_image" },
+        ],
+      }),
+      component: AnalyzerPage,
+    }
+  ) as unknown as undefined
+);
 
 // Suggested prompts shown on the empty state (ChatGPT style)
 const SUGGESTED_PROMPTS = [
@@ -53,6 +71,9 @@ const SUGGESTED_PROMPTS = [
   "What are the most important questions for the exam?",
   "Write a C++ program to implement BFS.",
 ];
+
+// Session persistence key in sessionStorage
+const SESSION_STORAGE_KEY = "ss_spark_active_chat";
 
 function AnalyzerPage() {
   const { user, isGuest, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -66,9 +87,17 @@ function AnalyzerPage() {
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streamingPhase, setStreamingPhase] = useState<string>("");
   const [docsLoading, setDocsLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [activeChat, setActiveChat] = useState<string | null>(null);
+  const [activeChat, setActiveChat] = useState<string | null>(() => {
+    // Restore active session from sessionStorage so page refresh doesn't lose context
+    try {
+      return sessionStorage.getItem(SESSION_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [uploadOpen, setUploadOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchPadOpen, setSearchPadOpen] = useState(false);
@@ -76,6 +105,47 @@ function AnalyzerPage() {
 
   // Track blob URLs for cleanup to prevent memory leaks
   const blobUrlsRef = useRef<Set<string>>(new Set());
+
+  // Race-condition prevention: track the current in-flight abort controller
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Lock to prevent double-submit (race between button click and Enter key)
+  const sendingRef = useRef(false);
+
+  // Ref-mirror of activeChat so async closures always see the latest value
+  const activeChatRef = useRef<string | null>(activeChat);
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+    // Persist to sessionStorage
+    try {
+      if (activeChat) {
+        sessionStorage.setItem(SESSION_STORAGE_KEY, activeChat);
+      } else {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [activeChat]);
+
+  // Smart auto-scroll: only scroll if user is near the bottom
+  const autoScrollRef = useRef(true);
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    autoScrollRef.current = distanceFromBottom < 120;
+  }, []);
+
+  const scrollToBottom = useCallback((force = false) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (force || autoScrollRef.current) {
+      requestAnimationFrame(() => {
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      });
+    }
+  }, []);
 
   // Redirect to login if not authenticated and not guest (after auth loads)
   useEffect(() => {
@@ -112,6 +182,34 @@ function AnalyzerPage() {
     loadDocs();
   }, [isAuthenticated]);
 
+  // Load active chat history on mount if we have a stored active session
+  useEffect(() => {
+    if (!isAuthenticated || !activeChat) return;
+
+    async function restoreHistory() {
+      try {
+        const historyRes = await chatApi.history(activeChat!);
+        if (historyRes.data.length > 0) {
+          const historyMsgs: ChatMessageData[] = historyRes.data.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            createdAt: new Date(m.created_at),
+            confidence: m.confidence,
+            citations: m.citations,
+          }));
+          setMessages(historyMsgs);
+          setTimeout(() => scrollToBottom(true), 100);
+        }
+      } catch {
+        // Non-fatal — just start fresh
+      }
+    }
+
+    restoreHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]); // Only run once on mount
+
   // Fetch real chat sessions from backend
   const loadSessions = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -133,21 +231,18 @@ function AnalyzerPage() {
     root.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom when new messages arrive (respects user scroll position)
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    });
-  }, [messages, loading]);
+    scrollToBottom();
+  }, [messages, loading, scrollToBottom]);
 
-  // Cleanup blob URLs on unmount
+  // Cleanup blob URLs and abort any in-flight request on unmount
   useEffect(() => {
     const currentBlobUrls = blobUrlsRef.current;
     return () => {
       currentBlobUrls.forEach((url) => URL.revokeObjectURL(url));
       currentBlobUrls.clear();
+      abortControllerRef.current?.abort();
     };
   }, []);
 
@@ -165,6 +260,12 @@ function AnalyzerPage() {
 
   // Handle selecting a chat session in the sidebar or settings modal
   async function handleSelectChat(sessionId: string) {
+    // Abort any in-flight request when switching sessions
+    abortControllerRef.current?.abort();
+    setLoading(false);
+    sendingRef.current = false;
+    setStreamingPhase("");
+
     setActiveChat(sessionId);
     if (isAuthenticated) {
       try {
@@ -175,10 +276,10 @@ function AnalyzerPage() {
           content: m.content,
           createdAt: new Date(m.created_at),
           confidence: m.confidence,
-          // Preserve full citation including id and relevance
           citations: m.citations,
         }));
         setMessages(historyMsgs);
+        setTimeout(() => scrollToBottom(true), 100);
       } catch (err) {
         toast.error("Failed to load chat history");
       }
@@ -205,7 +306,6 @@ function AnalyzerPage() {
           }
           toast.success("Document removed from workspace");
         } catch (err: unknown) {
-          // Revert optimistic removal on server failure
           setDocs(previousDocs);
           toast.error(err instanceof Error ? err.message : "Failed to delete document from server");
         }
@@ -220,164 +320,268 @@ function AnalyzerPage() {
     [isAuthenticated],
   );
 
-  async function addFiles(files: File[]) {
-    if (files.length === 0) return;
+  // ─── Core streaming send function ──────────────────────────────────────────
+  const sendMessage = useCallback(
+    (text: string) => {
+      if (!text.trim()) return;
+      // Prevent duplicate submission
+      if (sendingRef.current) return;
+      sendingRef.current = true;
 
-    // Optimistic UI update
-    const added = files.map<UploadedDoc>((file) => {
-      const kind = kindFromName(file.name);
-      let previewUrl: string | undefined;
-      if (kind === "image") {
-        previewUrl = URL.createObjectURL(file);
-        blobUrlsRef.current.add(previewUrl);
+      // Abort any previous in-flight request
+      abortControllerRef.current?.abort();
+
+      // Unique ID for this specific request — guards against stale closures
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+      // Placeholder message IDs
+      const userMsgId = `u-${Date.now()}`;
+      const assistantMsgId = `a-${Date.now() + 1}`;
+
+      setMessages((current) => [
+        ...current,
+        { id: userMsgId, role: "user", content: text, createdAt: new Date() },
+      ]);
+      setInput("");
+      setLoading(true);
+      setStreamingPhase("thinking");
+      scrollToBottom(true);
+
+      if (isAuthenticated) {
+        // Capture the current session ID from the ref (not closure) so
+        // a quick second send doesn't pick up the wrong session
+        const sessionIdAtSend = activeChatRef.current ?? undefined;
+
+        const controller = chatApi.sendStream(text, sessionIdAtSend, {
+          onSession: (sid) => {
+            // Set session ID as soon as the server acknowledges it
+            if (!activeChatRef.current) {
+              setActiveChat(sid);
+            }
+            // Update placeholder message with the real session
+          },
+          onPhase: (phase) => {
+            setStreamingPhase(phase);
+          },
+          onToken: (token) => {
+            setMessages((current) => {
+              const idx = current.findIndex((m) => m.id === assistantMsgId);
+              if (idx === -1) {
+                // First token — add the assistant placeholder
+                return [
+                  ...current,
+                  {
+                    id: assistantMsgId,
+                    role: "assistant",
+                    content: token,
+                    createdAt: new Date(),
+                    isStreaming: true,
+                  },
+                ];
+              }
+              // Append token to the existing message
+              const updated = [...current];
+              updated[idx] = {
+                ...updated[idx],
+                content: updated[idx].content + token,
+              };
+              return updated;
+            });
+          },
+          onMeta: (meta: StreamMeta) => {
+            setMessages((current) => {
+              const idx = current.findIndex((m) => m.id === assistantMsgId);
+              if (idx === -1) return current;
+              const updated = [...current];
+              updated[idx] = {
+                ...updated[idx],
+                confidence: meta.confidence ?? undefined,
+                citations: meta.citations,
+                status: meta.status,
+                isStreaming: false,
+              };
+              return updated;
+            });
+          },
+          onError: (errMsg) => {
+            // Show inline error message in chat
+            setMessages((current) => {
+              const idx = current.findIndex((m) => m.id === assistantMsgId);
+              if (idx !== -1) {
+                // Update existing placeholder with error
+                const updated = [...current];
+                updated[idx] = {
+                  ...updated[idx],
+                  content: errMsg,
+                  status: "error",
+                  isStreaming: false,
+                };
+                return updated;
+              }
+              // Add error as new message if no placeholder yet
+              return [
+                ...current,
+                {
+                  id: assistantMsgId,
+                  role: "assistant",
+                  content: errMsg,
+                  createdAt: new Date(),
+                  status: "error",
+                  isStreaming: false,
+                },
+              ];
+            });
+          },
+          onDone: () => {
+            setLoading(false);
+            setStreamingPhase("");
+            sendingRef.current = false;
+            // Mark streaming as finished on the message
+            setMessages((current) => {
+              const idx = current.findIndex((m) => m.id === assistantMsgId);
+              if (idx === -1) return current;
+              if (!current[idx].isStreaming) return current;
+              const updated = [...current];
+              updated[idx] = { ...updated[idx], isStreaming: false };
+              return updated;
+            });
+            // Refresh sessions list after sending so new sessions appear in sidebar
+            loadSessions();
+          },
+        });
+
+        abortControllerRef.current = controller;
+      } else {
+        // Guest / demo mode — use sample answer
+        window.setTimeout(() => {
+          setMessages((current) => [
+            ...current,
+            {
+              id: assistantMsgId,
+              role: "assistant",
+              content: sampleAnswer,
+              createdAt: new Date(),
+              confidence: 0.89,
+              citations: sampleCitations,
+            },
+          ]);
+          setLoading(false);
+          setStreamingPhase("");
+          sendingRef.current = false;
+        }, 1600);
       }
-      return {
-        id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        name: file.name,
-        kind,
-        typeLabel: typeLabel(kind),
-        uploadedAt: new Date(),
-        pages: kind === "image" ? 1 : Math.max(1, Math.round(file.size / 42000) || 6),
-        previewUrl,
-      };
-    });
-    setDocs((current) => [...added, ...current]);
+    },
+    [isAuthenticated, loadSessions, scrollToBottom],
+  );
 
-    // Real upload if authenticated
-    if (isAuthenticated) {
-      try {
-        await documentsApi.upload(files);
-        toast.success(`${files.length} file${files.length > 1 ? "s" : ""} uploaded and indexed!`);
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
 
+      const added = files.map<UploadedDoc>((file) => {
+        const kind = kindFromName(file.name);
+        let previewUrl: string | undefined;
+        if (kind === "image") {
+          previewUrl = URL.createObjectURL(file);
+          blobUrlsRef.current.add(previewUrl);
+        }
+        return {
+          id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: file.name,
+          kind,
+          typeLabel: typeLabel(kind),
+          uploadedAt: new Date(),
+          pages: kind === "image" ? 1 : Math.max(1, Math.round(file.size / 42000) || 6),
+          previewUrl,
+        };
+      });
+      setDocs((current) => [...added, ...current]);
+
+      if (isAuthenticated) {
         try {
-          const result = await documentsApi.list();
-          setDocs((current) => {
+          const uploadRes = await documentsApi.upload(files);
+          toast.success(`${files.length} file${files.length > 1 ? "s" : ""} uploaded and indexed!`);
+
+          if (uploadRes.data && uploadRes.data.length > 0) {
             const previewMap = new Map<string, string>();
-            current.forEach((d) => {
+            added.forEach((d) => {
               if (d.previewUrl) previewMap.set(d.name, d.previewUrl);
             });
-            return result.data.map((doc) => ({
-              id: doc.id,
-              name: doc.name,
-              kind: kindFromName(doc.name),
-              typeLabel: typeLabel(kindFromName(doc.name)),
-              uploadedAt: new Date(doc.uploaded_at),
-              pages: doc.pages,
-              previewUrl: previewMap.get(doc.name),
-            }));
+            const serverDocs: UploadedDoc[] = uploadRes.data.map((doc) => {
+              const docName = doc.name || doc.filename || "Document";
+              return {
+                id: doc.id,
+                name: docName,
+                kind: kindFromName(docName),
+                typeLabel: typeLabel(kindFromName(docName)),
+                uploadedAt: new Date(doc.uploaded_at),
+                pages: doc.pages,
+                previewUrl: previewMap.get(docName) ?? previewMap.get(doc.filename),
+              };
+            });
+            setDocs((current) => {
+              const nonOptimistic = current.filter((d) => !added.some((a) => a.id === d.id));
+              return [...serverDocs, ...nonOptimistic];
+            });
+          }
+        } catch (err: unknown) {
+          toast.error(err instanceof Error ? err.message : "Upload failed");
+          setDocs((current) => {
+            const filtered = current.filter((d) => !added.some((a) => a.id === d.id));
+            added.forEach((a) => {
+              if (a.previewUrl && blobUrlsRef.current.has(a.previewUrl)) {
+                URL.revokeObjectURL(a.previewUrl);
+                blobUrlsRef.current.delete(a.previewUrl);
+              }
+            });
+            return filtered;
           });
-        } catch {
-          // Non-fatal
         }
-      } catch (err: unknown) {
-        toast.error(err instanceof Error ? err.message : "Upload failed");
-        setDocs((current) => {
-          const filtered = current.filter((d) => !added.some((a) => a.id === d.id));
-          added.forEach((a) => {
-            if (a.previewUrl && blobUrlsRef.current.has(a.previewUrl)) {
-              URL.revokeObjectURL(a.previewUrl);
-              blobUrlsRef.current.delete(a.previewUrl);
-            }
-          });
-          return filtered;
-        });
+      } else {
+        toast.success(`${added.length} file${added.length > 1 ? "s" : ""} added (guest mode — not saved)`);
       }
-    } else {
-      toast.success(`${added.length} file${added.length > 1 ? "s" : ""} added (guest mode — not saved)`);
-    }
-  }
+    },
+    [isAuthenticated],
+  );
 
-  // FIX: regenerate sends the last user message, not the empty input
-  function handleRegenerate() {
+  const handleRegenerate = useCallback(() => {
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
     setInput(lastUserMsg.content);
-    // Remove last assistant response to re-ask
     setMessages((current) => {
       const lastAssistantIdx = [...current].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant");
       if (lastAssistantIdx) return current.slice(0, lastAssistantIdx.i);
       return current;
     });
-    // Small timeout to let state update, then send
     setTimeout(() => {
       sendMessage(lastUserMsg.content);
     }, 50);
-  }
+  }, [messages, sendMessage]);
 
-  // Core send function — accepts optional explicit text (used by regenerate)
-  async function sendMessage(text: string) {
-    if (!text.trim() || loading) return;
-    setMessages((current) => [
-      ...current,
-      { id: `u-${Date.now()}`, role: "user", content: text, createdAt: new Date() },
-    ]);
-    setInput("");
-    setLoading(true);
-
-    if (isAuthenticated) {
-      try {
-        const sessionId = activeChat ?? undefined;
-        const res = await chatApi.send(text, sessionId);
-        const d = res.data;
-
-        if (d.session_id && !activeChat) {
-          setActiveChat(d.session_id);
-        }
-
-        setMessages((current) => [
-          ...current,
-          {
-            id: `a-${Date.now()}`,
-            role: "assistant",
-            content: d.answer,
-            createdAt: new Date(),
-            confidence: d.confidence ?? undefined,
-            status: d.status,
-            // FIX: preserve all citation fields including id and relevance
-            citations: d.citations.map((c) => ({
-              id: c.id,
-              source: c.source,
-              page: c.page,
-              snippet: c.snippet,
-              relevance: c.relevance,
-            })),
-          },
-        ]);
-
-        // Refresh sessions list after sending so new sessions appear in sidebar
-        loadSessions();
-      } catch (err: unknown) {
-        toast.error(err instanceof Error ? err.message : "Failed to get answer");
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      // Guest / demo mode — use sample answer
-      window.setTimeout(() => {
-        setMessages((current) => [
-          ...current,
-          {
-            id: `a-${Date.now()}`,
-            role: "assistant",
-            content: sampleAnswer,
-            createdAt: new Date(),
-            confidence: 0.89,
-            citations: sampleCitations,
-          },
-        ]);
-        setLoading(false);
-      }, 1600);
-    }
-  }
-
-  function send() {
+  const send = useCallback(() => {
     sendMessage(input.trim());
-  }
+  }, [input, sendMessage]);
 
-  function handleStop() {
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setLoading(false);
+    setStreamingPhase("");
+    sendingRef.current = false;
+    // Mark the streaming message as finished
+    setMessages((current) => {
+      // Find last streaming message (compatible with older ES targets)
+      let idx = -1;
+      for (let i = current.length - 1; i >= 0; i--) {
+        if (current[i].isStreaming) { idx = i; break; }
+      }
+      if (idx === -1) return current;
+      const updated = [...current];
+      updated[idx] = { ...updated[idx], isStreaming: false };
+      return updated;
+    });
     toast("Response stopped.");
-  }
+  }, []);
 
   const hasMessages = messages.length > 0;
 
@@ -392,6 +596,11 @@ function AnalyzerPage() {
         activeChat={activeChat}
         onSelectChat={handleSelectChat}
         onNewChat={() => {
+          // Abort in-flight request when starting a new chat
+          abortControllerRef.current?.abort();
+          setLoading(false);
+          sendingRef.current = false;
+          setStreamingPhase("");
           setMessages([]);
           setActiveChat(null);
           toast.success("Started a new chat");
@@ -416,7 +625,7 @@ function AnalyzerPage() {
         />
 
         {/* ── Scrollable chat area ── */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
           {/* ── Empty / Welcome state — ChatGPT style ── */}
           {!hasMessages && !loading && (
             <div className="flex h-full flex-col items-center justify-center px-4 py-12 text-center">
@@ -476,7 +685,9 @@ function AnalyzerPage() {
                   onRegenerate={handleRegenerate}
                 />
               ))}
-              {loading && <TypingIndicator />}
+              {loading && !messages.some((m) => m.isStreaming) && (
+                <TypingIndicator phase={streamingPhase} />
+              )}
             </div>
           )}
 
@@ -547,12 +758,14 @@ function AnalyzerPage() {
         />
       </div>
 
-      {/* ── Right analyzer panel ── */}
-      <AnalyzerPanel
-        open={panelOpen}
-        onClose={() => setPanelOpen(false)}
-        paperCount={docs.length}
-      />
+      {/* ── Right analyzer panel (lazy-loaded with Recharts) ── */}
+      <Suspense fallback={null}>
+        <AnalyzerPanel
+          open={panelOpen}
+          onClose={() => setPanelOpen(false)}
+          paperCount={docs.length}
+        />
+      </Suspense>
 
       {/* ── Upload dialog ── */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
@@ -569,26 +782,34 @@ function AnalyzerPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Search Pad & Document Workspace Modal ── */}
-      <SearchPadModal
-        open={searchPadOpen}
-        onOpenChange={setSearchPadOpen}
-        docs={docs}
-        onUploadFiles={addFiles}
-        onDeleteDoc={removeDoc}
-        onAskAboutDoc={(docName) => {
-          setInput(`Tell me the main topics and important questions from ${docName}`);
-        }}
-      />
+      {/* ── Search Pad & Document Workspace Modal (lazy-loaded) ── */}
+      <Suspense fallback={null}>
+        {searchPadOpen && (
+          <SearchPadModal
+            open={searchPadOpen}
+            onOpenChange={setSearchPadOpen}
+            docs={docs}
+            onUploadFiles={addFiles}
+            onDeleteDoc={removeDoc}
+            onAskAboutDoc={(docName) => {
+              setInput(`Tell me the main topics and important questions from ${docName}`);
+            }}
+          />
+        )}
+      </Suspense>
 
-      {/* ── User Settings Modal ── */}
-      <UserSettingsModal
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        sessions={sessions}
-        onSelectSession={handleSelectChat}
-        onRefreshSessions={loadSessions}
-      />
+      {/* ── User Settings Modal (lazy-loaded) ── */}
+      <Suspense fallback={null}>
+        {settingsOpen && (
+          <UserSettingsModal
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            sessions={sessions}
+            onSelectSession={handleSelectChat}
+            onRefreshSessions={loadSessions}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

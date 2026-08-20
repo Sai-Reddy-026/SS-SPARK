@@ -1,8 +1,9 @@
+import { memo } from "react";
 import { FileText, Quote } from "lucide-react";
 import type { Citation } from "@/lib/analyzer";
 import { Progress } from "@/components/ui/progress";
 
-export function CitationCard({ citation }: { citation: Citation }) {
+export const CitationCard = memo(function CitationCard({ citation }: { citation: Citation }) {
   return (
     <div className="rounded-xl border bg-background/40 p-3 transition-colors hover:border-primary/50">
       <div className="flex items-start gap-2">
@@ -26,9 +27,9 @@ export function CitationCard({ citation }: { citation: Citation }) {
       </div>
     </div>
   );
-}
+});
 
-export function SourceCard({ citation }: { citation: Citation }) {
+export const SourceCard = memo(function SourceCard({ citation }: { citation: Citation }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border bg-background/40 px-2.5 py-1.5 text-[11px] transition-colors hover:border-primary/50">
       <FileText className="h-3.5 w-3.5 shrink-0 text-chart-1" />
@@ -36,4 +37,4 @@ export function SourceCard({ citation }: { citation: Citation }) {
       <span className="shrink-0 text-muted-foreground">Page {citation.page}</span>
     </div>
   );
-}
+});

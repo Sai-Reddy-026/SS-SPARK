@@ -27,7 +27,10 @@ export interface ChatMessageData {
   citations?: Citation[];
   /** "success" | "partial" | "unsure" | "general" | "error" — set by the backend */
   status?: string;
+  /** True while the assistant message is still streaming tokens */
+  isStreaming?: boolean;
 }
+
 
 export interface ChatThread {
   id: string;

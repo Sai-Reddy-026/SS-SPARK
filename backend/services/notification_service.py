@@ -1,159 +1,172 @@
 """
 services/notification_service.py
 
-Email notifications via SMTP (for email verification and password reset).
-Falls back gracefully if SMTP is not configured — logs the link instead.
+Email notifications — delegates to services/email_service.py for delivery.
+
+This module builds the email HTML/text content.
+Actual sending is handled by email_service.send_email(), which supports
+Resend.com, SMTP, or log-mode depending on environment variables.
 """
 
 from __future__ import annotations
 
-import html
 import logging
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from typing import Optional
+
+from services.email_service import send_email
 
 logger = logging.getLogger(__name__)
 
 
-async def send_email(
-    to_email: str,
-    subject: str,
-    html_body: str,
-    text_body: Optional[str] = None,
-) -> bool:
-    """
-    Send an email via SMTP.
-
-    Returns True on success, False if SMTP is unconfigured or fails.
-    """
+def _get_frontend_url() -> str:
     from core.config import get_settings
-    cfg = get_settings()
-
-    if not cfg.has_smtp:
-        logger.warning(
-            "SMTP not configured — skipping email to %s (subject: %s)", to_email, subject
-        )
-        # Print the content so developers can still use the link in dev
-        logger.info("EMAIL CONTENT:\n%s", text_body or html_body)
-        return False
-
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = cfg.SMTP_FROM
-        msg["To"] = to_email
-
-        if text_body:
-            msg.attach(MIMEText(text_body, "plain"))
-        msg.attach(MIMEText(html_body, "html"))
-
-        # HIGH-4: Use aiosmtplib (async) instead of smtplib (sync/blocking).
-        # smtplib.SMTP blocks the entire asyncio event loop during connection + TLS + send.
-        try:
-            import aiosmtplib  # type: ignore
-            await aiosmtplib.send(
-                msg,
-                hostname=cfg.SMTP_HOST,
-                port=cfg.SMTP_PORT,
-                username=cfg.SMTP_USER,
-                password=cfg.SMTP_PASS,
-                start_tls=True,
-            )
-        except ImportError:
-            # Graceful fallback if aiosmtplib not installed yet
-            import asyncio
-            import smtplib as _smtplib
-            def _send_sync() -> None:
-                with _smtplib.SMTP(cfg.SMTP_HOST, cfg.SMTP_PORT) as server:
-                    server.ehlo()
-                    server.starttls()
-                    server.login(cfg.SMTP_USER, cfg.SMTP_PASS)
-                    server.sendmail(cfg.SMTP_FROM, to_email, msg.as_string())
-            await asyncio.to_thread(_send_sync)
-
-        logger.info("Email sent to %s (subject: %s)", to_email, subject)
-        return True
-
-    except Exception as exc:
-        logger.error("Failed to send email to %s: %s", to_email, exc)
-        return False
+    return get_settings().FRONTEND_URL.rstrip("/")
 
 
 async def send_verification_email(email: str, token: str) -> bool:
     """Send an email address verification email."""
-    from core.config import get_settings
-    cfg = get_settings()
-    link = f"{cfg.FRONTEND_URL}/verify-email?token={token}"
+    frontend_url = _get_frontend_url()
+    link = f"{frontend_url}/verify-email?token={token}"
 
     subject = "Verify your SS SPARK email address"
-    html = f"""
-    <div style="font-family: 'Inter', sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-      <div style="text-align: center; margin-bottom: 32px;">
-        <h1 style="color: #7c6ff7; font-size: 28px; margin: 0;">SS SPARK</h1>
-        <p style="color: #888; margin-top: 4px;">AI Question Paper Analyzer</p>
-      </div>
-      <div style="background: #1a1a2e; border: 1px solid rgba(255,255,255,0.1);
-                  border-radius: 16px; padding: 32px;">
-        <h2 style="color: #fff; margin-top: 0;">Verify your email address</h2>
-        <p style="color: #ccc; line-height: 1.6;">
-          Click the button below to verify your email address and activate your account.
-          This link expires in 24 hours.
-        </p>
-        <div style="text-align: center; margin: 32px 0;">
-          <a href="{link}"
-             style="background: linear-gradient(135deg, #7c6ff7, #a855f7);
-                    color: white; padding: 14px 32px; border-radius: 10px;
-                    text-decoration: none; font-weight: 600; font-size: 16px;">
-            Verify Email Address
-          </a>
-        </div>
-        <p style="color: #666; font-size: 13px;">
-          Or copy this link: <a href="{link}" style="color: #7c6ff7;">{link}</a>
-        </p>
-      </div>
-    </div>
-    """
-    text = f"Verify your SS SPARK email:\n\n{link}\n\nThis link expires in 24 hours."
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#0d0d1a;font-family:'Inter',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0d0d1a;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+        <!-- Header -->
+        <tr><td align="center" style="padding-bottom:32px;">
+          <h1 style="color:#8b5cf6;font-size:28px;margin:0;letter-spacing:-0.5px;">SS SPARK</h1>
+          <p style="color:#6b7280;margin:4px 0 0;">AI Question Paper Analyzer</p>
+        </td></tr>
+        <!-- Card -->
+        <tr><td style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:40px;">
+          <h2 style="color:#fff;margin:0 0 16px;font-size:22px;">Verify your email address</h2>
+          <p style="color:#cbd5e1;line-height:1.7;margin:0 0 32px;">
+            Click the button below to verify your email address and activate your account.
+            This link expires in <strong style="color:#fff;">24 hours</strong>.
+          </p>
+          <div style="text-align:center;margin:32px 0;">
+            <a href="{link}"
+               style="background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;
+                      padding:14px 36px;border-radius:10px;text-decoration:none;
+                      font-weight:600;font-size:16px;display:inline-block;">
+              Verify Email Address
+            </a>
+          </div>
+          <p style="color:#6b7280;font-size:13px;margin:24px 0 0;line-height:1.6;">
+            Or paste this link in your browser:<br>
+            <a href="{link}" style="color:#8b5cf6;word-break:break-all;">{link}</a>
+          </p>
+          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:24px 0;">
+          <p style="color:#6b7280;font-size:12px;margin:0;">
+            If you didn't create an SS SPARK account, you can safely ignore this email.
+          </p>
+        </td></tr>
+        <!-- Footer -->
+        <tr><td align="center" style="padding-top:24px;">
+          <p style="color:#4b5563;font-size:12px;margin:0;">
+            © 2025 SS SPARK · AI Question Paper Analyzer
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    text = (
+        f"Verify your SS SPARK email\n\n"
+        f"Click the link below to verify your email address:\n{link}\n\n"
+        f"This link expires in 24 hours.\n\n"
+        f"If you didn't create an account, ignore this email."
+    )
+
     return await send_email(email, subject, html, text)
 
 
 async def send_password_reset_email(email: str, token: str) -> bool:
-    """Send a password reset email."""
-    from core.config import get_settings
-    cfg = get_settings()
-    link = f"{cfg.FRONTEND_URL}/reset-password?token={token}"
+    """
+    Send a password reset email.
+
+    `token` is the raw (unhashed) reset token to embed in the URL.
+    """
+    frontend_url = _get_frontend_url()
+    link = f"{frontend_url}/reset-password?token={token}"
+
+    logger.info("[notification] Building password reset email for %s — link domain: %s", email, frontend_url)
 
     subject = "Reset your SS SPARK password"
-    html = f"""
-    <div style="font-family: 'Inter', sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-      <div style="text-align: center; margin-bottom: 32px;">
-        <h1 style="color: #7c6ff7; font-size: 28px; margin: 0;">SS SPARK</h1>
-        <p style="color: #888; margin-top: 4px;">AI Question Paper Analyzer</p>
-      </div>
-      <div style="background: #1a1a2e; border: 1px solid rgba(255,255,255,0.1);
-                  border-radius: 16px; padding: 32px;">
-        <h2 style="color: #fff; margin-top: 0;">Reset your password</h2>
-        <p style="color: #ccc; line-height: 1.6;">
-          You requested a password reset. Click the button below to choose a new password.
-          This link expires in 1 hour. If you didn't request this, ignore this email.
-        </p>
-        <div style="text-align: center; margin: 32px 0;">
-          <a href="{link}"
-             style="background: linear-gradient(135deg, #7c6ff7, #a855f7);
-                    color: white; padding: 14px 32px; border-radius: 10px;
-                    text-decoration: none; font-weight: 600; font-size: 16px;">
-            Reset Password
-          </a>
-        </div>
-        <p style="color: #666; font-size: 13px;">
-          Or copy this link: <a href="{link}" style="color: #7c6ff7;">{link}</a>
-        </p>
-      </div>
-    </div>
-    """
-    text = f"Reset your SS SPARK password:\n\n{link}\n\nThis link expires in 1 hour."
-    return await send_email(email, subject, html, text)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#0d0d1a;font-family:'Inter',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0d0d1a;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+        <!-- Header -->
+        <tr><td align="center" style="padding-bottom:32px;">
+          <h1 style="color:#8b5cf6;font-size:28px;margin:0;letter-spacing:-0.5px;">SS SPARK</h1>
+          <p style="color:#6b7280;margin:4px 0 0;">AI Question Paper Analyzer</p>
+        </td></tr>
+        <!-- Card -->
+        <tr><td style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:40px;">
+          <h2 style="color:#fff;margin:0 0 16px;font-size:22px;">Reset your password</h2>
+          <p style="color:#cbd5e1;line-height:1.7;margin:0 0 8px;">Hello,</p>
+          <p style="color:#cbd5e1;line-height:1.7;margin:0 0 32px;">
+            We received a request to reset your SS SPARK password.
+            Click the button below to choose a new password.
+            This link expires in <strong style="color:#fff;">30 minutes</strong>.
+          </p>
+          <div style="text-align:center;margin:32px 0;">
+            <a href="{link}"
+               style="background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;
+                      padding:14px 36px;border-radius:10px;text-decoration:none;
+                      font-weight:600;font-size:16px;display:inline-block;">
+              Reset Password
+            </a>
+          </div>
+          <p style="color:#6b7280;font-size:13px;margin:24px 0 0;line-height:1.6;">
+            Or paste this link in your browser:<br>
+            <a href="{link}" style="color:#8b5cf6;word-break:break-all;">{link}</a>
+          </p>
+          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:24px 0;">
+          <p style="color:#6b7280;font-size:12px;margin:0;">
+            If you didn't request a password reset, you can safely ignore this email.
+            Your password will not be changed.
+          </p>
+        </td></tr>
+        <!-- Footer -->
+        <tr><td align="center" style="padding-top:24px;">
+          <p style="color:#4b5563;font-size:12px;margin:0;">
+            © 2025 SS SPARK · AI Question Paper Analyzer
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    text = (
+        f"Reset your SS SPARK password\n\n"
+        f"We received a request to reset your password.\n\n"
+        f"Click the link below to reset it:\n{link}\n\n"
+        f"This link expires in 30 minutes.\n\n"
+        f"If you didn't request this, you can safely ignore this email.\n\n"
+        f"Thanks,\nThe SS SPARK Team"
+    )
+
+    result = await send_email(email, subject, html, text)
+    if result:
+        logger.info("[notification] Password reset email sent successfully to %s", email)
+    else:
+        logger.error("[notification] Failed to send password reset email to %s", email)
+    return result
 
 
 async def send_admin_notification_email(
@@ -162,20 +175,28 @@ async def send_admin_notification_email(
     body: str,
 ) -> bool:
     """Send a platform announcement or notification from the admin."""
-    subject = f"[SS SPARK] {title}"
     import html as _html
     safe_title = _html.escape(title)
     safe_body = _html.escape(body).replace("\n", "<br>")
-    html_content = f"""
-    <div style="font-family: 'Inter', sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-      <div style="text-align: center; margin-bottom: 32px;">
-        <h1 style="color: #7c6ff7; font-size: 28px; margin: 0;">SS SPARK</h1>
-      </div>
-      <div style="background: #1a1a2e; border: 1px solid rgba(255,255,255,0.1);
-                  border-radius: 16px; padding: 32px;">
-        <h2 style="color: #fff; margin-top: 0;">{safe_title}</h2>
-        <p style="color: #ccc; line-height: 1.6;">{safe_body}</p>
-      </div>
-    </div>
-    """
+
+    subject = f"[SS SPARK] {title}"
+    html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#0d0d1a;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d0d1a;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" style="max-width:600px;">
+        <tr><td align="center" style="padding-bottom:32px;">
+          <h1 style="color:#8b5cf6;font-size:28px;margin:0;">SS SPARK</h1>
+        </td></tr>
+        <tr><td style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);
+                        border-radius:16px;padding:32px;">
+          <h2 style="color:#fff;margin:0 0 16px;">{safe_title}</h2>
+          <p style="color:#cbd5e1;line-height:1.7;">{safe_body}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
     return await send_email(to_email, subject, html_content, body)

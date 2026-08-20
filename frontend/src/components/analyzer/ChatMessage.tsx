@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
+  AlertCircle,
   BadgeCheck,
   BrainCircuit,
   ChevronDown,
@@ -19,7 +20,7 @@ import { formatTime, type ChatMessageData } from "@/lib/analyzer";
 import { Markdown } from "./Markdown";
 import { CitationCard, SourceCard } from "./CitationCard";
 
-export function ChatMessage({
+export const ChatMessage = memo(function ChatMessage({
   message,
   onRegenerate,
 }: {
@@ -30,7 +31,7 @@ export function ChatMessage({
   const [vote, setVote] = useState<"up" | "down" | null>(null);
   const isUser = message.role === "user";
 
-  // ─── User message — right-aligned pill bubble (ChatGPT style) ───
+  // ─── User message — right-aligned pill bubble ───
   if (isUser) {
     return (
       <div className="animate-message-in flex justify-end px-2 sm:px-4">
@@ -47,7 +48,35 @@ export function ChatMessage({
     );
   }
 
-  // ─── Assistant message — left-aligned, full-width, no card (ChatGPT style) ───
+  // ─── Assistant error message ───
+  if (message.status === "error") {
+    return (
+      <div className="animate-message-in px-2 sm:px-4">
+        <div className="mx-auto flex max-w-3xl gap-4">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-destructive/20 text-destructive shadow-md mt-1">
+            <AlertCircle className="h-4 w-4" />
+          </span>
+          <div className="flex-1 pb-2">
+            <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+              <p className="text-sm font-semibold text-destructive mb-1">Unable to respond</p>
+              <p className="text-sm text-destructive/80 leading-relaxed">{message.content}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onRegenerate}
+                className="mt-2 h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Try again
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Assistant message — left-aligned, full-width ───
   return (
     <div className="animate-message-in group px-2 sm:px-4">
       <div className="mx-auto flex max-w-3xl gap-4">
@@ -86,8 +115,13 @@ export function ChatMessage({
             </span>
           </div>
 
-          {/* Answer body */}
-          <Markdown content={message.content} />
+          {/* Answer body with optional streaming cursor */}
+          <div className="relative">
+            <Markdown content={message.content} />
+            {message.isStreaming && (
+              <span className="ml-0.5 inline-block h-4 w-0.5 animate-cursor-blink rounded-full bg-primary align-middle" />
+            )}
+          </div>
 
           {/* Citations */}
           {message.citations && message.citations.length > 0 && (
@@ -123,41 +157,43 @@ export function ChatMessage({
             </div>
           )}
 
-          {/* Action row — visible on hover (ChatGPT style) */}
-          <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-            <ActionButton
-              label="Copy"
-              icon={Copy}
-              onClick={() => {
-                void navigator.clipboard?.writeText(message.content);
-                toast.success("Answer copied to clipboard");
-              }}
-            />
-            <ActionButton label="Regenerate" icon={RefreshCw} onClick={onRegenerate} />
-            <ActionButton
-              label="Like"
-              icon={ThumbsUp}
-              active={vote === "up"}
-              onClick={() => {
-                setVote("up");
-                toast.success("Thanks for the feedback");
-              }}
-            />
-            <ActionButton
-              label="Dislike"
-              icon={ThumbsDown}
-              active={vote === "down"}
-              onClick={() => {
-                setVote("down");
-                toast("Feedback noted — we'll improve retrieval");
-              }}
-            />
-          </div>
+          {/* Action row — visible on hover */}
+          {!message.isStreaming && (
+            <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              <ActionButton
+                label="Copy"
+                icon={Copy}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(message.content);
+                  toast.success("Answer copied to clipboard");
+                }}
+              />
+              <ActionButton label="Regenerate" icon={RefreshCw} onClick={onRegenerate} />
+              <ActionButton
+                label="Like"
+                icon={ThumbsUp}
+                active={vote === "up"}
+                onClick={() => {
+                  setVote("up");
+                  toast.success("Thanks for the feedback");
+                }}
+              />
+              <ActionButton
+                label="Dislike"
+                icon={ThumbsDown}
+                active={vote === "down"}
+                onClick={() => {
+                  setVote("down");
+                  toast("Feedback noted — we'll improve retrieval");
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
-}
+});
 
 function ActionButton({
   label,
@@ -187,8 +223,18 @@ function ActionButton({
   );
 }
 
-// ─── Typing Indicator — ChatGPT-style animated dots only ───
-export function TypingIndicator() {
+// ─── Phase label map for TypingIndicator ───
+const PHASE_LABELS: Record<string, string> = {
+  thinking: "Thinking",
+  routing: "Routing request",
+  retrieving: "Retrieving documents",
+  generating: "Generating response",
+};
+
+// ─── Typing Indicator — shows current phase ───
+export function TypingIndicator({ phase }: { phase?: string }) {
+  const phaseLabel = (phase && PHASE_LABELS[phase]) || "Thinking";
+
   return (
     <div className="animate-message-in px-2 sm:px-4">
       <div className="mx-auto flex max-w-3xl gap-4">
@@ -200,7 +246,7 @@ export function TypingIndicator() {
             <span className="text-[13px] font-semibold text-foreground">SS SPARK AI</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Thinking</span>
+            <span className="text-sm text-muted-foreground transition-all duration-300">{phaseLabel}</span>
             <span className="flex gap-1">
               <Dot delay="0s" />
               <Dot delay="0.2s" />

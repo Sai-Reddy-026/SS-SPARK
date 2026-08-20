@@ -5,6 +5,7 @@ Hybrid Retriever combining Vector Search with BM25 Keyword Search for SS SPARK.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -49,6 +50,33 @@ class RetrievalResult:
         return [c.model_dump() for c in self.chunks]
 
 
+_RETRIEVAL_STOPWORDS = {
+    "what", "when", "where", "which", "while", "whose", "why", "how", "does", "explain",
+    "the", "and", "for", "are", "is", "in", "of", "to", "a", "an", "with", "between",
+    "from", "that", "this", "these", "those", "their", "relates", "summarize", "about",
+}
+
+
+def _hybrid_rerank(query: str, chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
+    """Combine dense vector similarity with lexical term overlap for high-precision citation ranking."""
+    import re
+    q_tokens = [w for w in re.findall(r"\w+", query.lower()) if len(w) >= 3 and w not in _RETRIEVAL_STOPWORDS]
+    if not q_tokens or not chunks:
+        return chunks
+
+    scored = []
+    for c in chunks:
+        c_text = f"{c.text} {c.source}".lower()
+        matches = sum(1 for t in q_tokens if t in c_text or (len(t) >= 4 and t[:4] in c_text))
+        lex_score = matches / len(q_tokens)
+        combined_score = 0.60 * c.relevance + 0.40 * lex_score
+        c.relevance = round(combined_score, 4)
+        scored.append((combined_score, c))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored]
+
+
 async def retrieve(
     query: str,
     top_k: int = 5,
@@ -56,8 +84,8 @@ async def retrieve(
     user_id: Optional[str] = None,
 ) -> RetrievalResult:
     """
-    Retrieve the most relevant context chunks for a query using embedding similarity.
-    Supports both top_k and n_results arguments.
+    Retrieve the most relevant context chunks for a query using hybrid embedding similarity & lexical matching.
+    Non-blocking offload to worker threads prevents freezing the asyncio event loop.
     """
     limit = n_results if n_results is not None else top_k
     if not query.strip():
@@ -67,11 +95,12 @@ async def retrieve(
         embedder = get_embedder()
         vs = get_vector_store()
 
-        query_vectors = embedder.embed([query])
+        query_vectors = await asyncio.to_thread(embedder.embed, [query])
         if not query_vectors:
             return RetrievalResult([])
 
-        hits = vs.search(query_vectors[0], n_results=limit, user_id=user_id)
+        fetch_limit = max(limit * 2, 6)
+        hits = await asyncio.to_thread(vs.search, query_vectors[0], n_results=fetch_limit, user_id=user_id)
         chunks = [
             RetrievedChunk(
                 id=h.get("id", ""),
@@ -83,7 +112,8 @@ async def retrieve(
             )
             for h in hits
         ]
-        return RetrievalResult(chunks)
+        reranked = _hybrid_rerank(query, chunks)
+        return RetrievalResult(reranked[:limit])
     except Exception as exc:
         logger.warning("Retrieval encountered an error: %s", exc)
         return RetrievalResult([])
@@ -91,4 +121,5 @@ async def retrieve(
 
 # Alias for backwards compatibility
 qdrant_retrieve = retrieve
+
 

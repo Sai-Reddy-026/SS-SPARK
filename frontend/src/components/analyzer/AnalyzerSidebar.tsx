@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   BrainCircuit,
@@ -40,7 +40,7 @@ interface SidebarProps {
   onSearch: (value: string) => void;
 }
 
-export function AnalyzerSidebar({
+export const AnalyzerSidebar = memo(function AnalyzerSidebar({
   open,
   onToggle,
   docs,
@@ -306,7 +306,7 @@ export function AnalyzerSidebar({
       </div>
     </aside>
   );
-}
+});
 
 function SectionLabel({
   open,

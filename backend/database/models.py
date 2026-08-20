@@ -68,6 +68,8 @@ async def init_db(mongo_uri: str, db_name: str = "ss_spark") -> None:
         # Initialize collections indexes
         await _db.documents.create_index([("user_id", 1), ("uploaded_at", -1)])
         await _db.documents.create_index("id", unique=True)
+        await _db.documents.create_index([("id", 1), ("user_id", 1)])
+        await _db.documents.create_index([("user_id", 1), ("id", 1)])
         await _db.chat_messages.create_index([("session_id", 1), ("created_at", 1)])
         await _db.chat_messages.create_index([("user_id", 1), ("created_at", -1)])
         await _db.chat_sessions.create_index([("user_id", 1), ("updated_at", -1)])
@@ -349,16 +351,25 @@ async def save_settings(settings: SystemSettings) -> SystemSettings:
 # --------------------------------------------------------------------------- #
 
 async def get_user_stats(user_id: str) -> Dict[str, Any]:
-    """Calculate usage stats for a user."""
-    docs = await get_documents(user_id)
-    total_docs = len(docs)
-    total_mb = sum(d.size_mb for d in docs)
-    sessions = await get_sessions(user_id)
-    
-    # Calculate questions asked
+    """Calculate usage stats for a user with concurrent aggregation."""
+    import asyncio
     if _db is not None:
-        q_count = await _db.chat_messages.count_documents({"user_id": user_id, "role": "user"})
+        storage_pipe = [
+            {"$match": {"user_id": user_id}},
+            {"$group": {"_id": None, "total": {"$sum": "$size_mb"}}},
+        ]
+        (total_docs, storage_res, sessions_count, q_count) = await asyncio.gather(
+            _db.documents.count_documents({"user_id": user_id}),
+            _db.documents.aggregate(storage_pipe).to_list(1),
+            _db.chat_sessions.count_documents({"user_id": user_id}),
+            _db.chat_messages.count_documents({"user_id": user_id, "role": "user"}),
+        )
+        total_mb = storage_res[0]["total"] if storage_res else 0.0
     else:
+        docs = [d for d in _mem_docs.values() if d.user_id == user_id]
+        total_docs = len(docs)
+        total_mb = sum(d.size_mb for d in docs)
+        sessions_count = len([s for s in _mem_sessions.values() if s.user_id == user_id])
         q_count = len([m for m in _mem_messages if m.user_id == user_id and m.role == "user"])
 
     return {
@@ -366,21 +377,25 @@ async def get_user_stats(user_id: str) -> Dict[str, Any]:
         "documents_uploaded": total_docs,
         "storage_used_mb": round(total_mb, 2),
         "average_confidence": 0.94,
-        "sessions_count": len(sessions),
+        "sessions_count": sessions_count,
     }
 
 
 async def get_panel_stats(user_id: Optional[str] = None) -> Dict[str, Any]:
-    """Return dashboard analytics for the UI side panel."""
-    docs = await get_documents(user_id)
-    total_docs = len(docs)
-    
+    """Return dashboard analytics for the UI side panel with direct count."""
+    import asyncio
     if _db is not None:
-        q_filter = {"role": "user"}
+        doc_query: Dict[str, Any] = {"user_id": user_id} if user_id else {}
+        q_query: Dict[str, Any] = {"role": "user"}
         if user_id:
-            q_filter["user_id"] = user_id
-        q_count = await _db.chat_messages.count_documents(q_filter)
+            q_query["user_id"] = user_id
+
+        total_docs, q_count = await asyncio.gather(
+            _db.documents.count_documents(doc_query),
+            _db.chat_messages.count_documents(q_query),
+        )
     else:
+        total_docs = len([d for d in _mem_docs.values() if user_id is None or d.user_id == user_id])
         q_count = len([m for m in _mem_messages if (user_id is None or m.user_id == user_id) and m.role == "user"])
 
     return {

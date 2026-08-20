@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { memo, useState, Fragment } from "react";
 import { Check, Copy } from "lucide-react";
-import { Fragment } from "react";
 import { toast } from "sonner";
 
 /** Minimal markdown renderer for headings, lists, bold/italic, inline & fenced code. */
@@ -32,7 +31,7 @@ function renderInline(text: string, keyPrefix: string) {
   });
 }
 
-function CodeBlock({ lang, code }: { lang: string; code: string }) {
+const CodeBlock = memo(function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
 
   function handleCopy() {
@@ -70,9 +69,9 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
       </pre>
     </div>
   );
-}
+});
 
-export function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({ content }: { content: string }) {
   const blocks = content.split(/```/);
 
   return (
@@ -144,4 +143,4 @@ export function Markdown({ content }: { content: string }) {
       })}
     </div>
   );
-}
+});

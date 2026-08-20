@@ -244,6 +244,11 @@
   animation: cursor-blink 1s step-end infinite;
 }
 
+@utility animate-cursor-blink {
+  animation: cursor-blink 0.8s step-end infinite;
+}
+
+
 /* Light-mode override for the dark composer pill */
 .light .composer-pill {
   background-color: oklch(0.96 0.008 45);

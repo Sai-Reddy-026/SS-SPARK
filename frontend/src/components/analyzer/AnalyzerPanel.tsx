@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { memo, useEffect, useState } from "react";
 import { X, FileStack, HelpCircle, TrendingUp, Repeat, Loader2 } from "lucide-react";
 import {
   Bar,
@@ -21,7 +21,7 @@ import { analyticsApi, type PanelStats } from "@/lib/api";
 
 const pieColors = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)"];
 
-export function AnalyzerPanel({
+export const AnalyzerPanel = memo(function AnalyzerPanel({
   open,
   onClose,
   paperCount,
@@ -212,7 +212,9 @@ export function AnalyzerPanel({
       </div>
     </aside>
   );
-}
+});
+
+export default AnalyzerPanel;
 
 function Stat({
   icon: Icon,

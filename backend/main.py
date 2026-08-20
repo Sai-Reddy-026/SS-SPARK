@@ -12,6 +12,7 @@ ReDoc available at:      http://localhost:8000/redoc
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 

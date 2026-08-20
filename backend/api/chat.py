@@ -88,8 +88,8 @@ async def chat_endpoint(
             event_generator(),
             media_type="text/event-stream",
             headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",  # Disable nginx buffering
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",  # Disable reverse-proxy / nginx buffering
                 "Connection": "keep-alive",
             },
         )

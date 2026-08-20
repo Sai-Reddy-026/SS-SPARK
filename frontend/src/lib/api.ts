@@ -193,6 +193,7 @@ export interface StreamCallbacks {
   onSession?: (sessionId: string) => void;
   onPhase?: (phase: StreamPhase) => void;
   onToken?: (token: string) => void;
+  onReset?: () => void;
   onMeta?: (meta: StreamMeta) => void;
   onError?: (message: string) => void;
   onDone?: () => void;
@@ -231,6 +232,35 @@ export const chatApi = {
     callbacks: StreamCallbacks,
   ): AbortController => {
     const controller = new AbortController();
+    let doneCalled = false;
+    const triggerDone = () => {
+      if (!doneCalled) {
+        doneCalled = true;
+        callbacks.onDone?.();
+      }
+    };
+
+    // Client-side inactivity watchdog: aborts if no chunk is received for 35 seconds
+    const INACTIVITY_TIMEOUT_MS = 35000;
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetWatchdog = () => {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      watchdogTimer = setTimeout(() => {
+        if (!doneCalled) {
+          controller.abort();
+          callbacks.onError?.("Stream connection timed out due to inactivity.");
+          triggerDone();
+        }
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    const clearWatchdog = () => {
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+      }
+    };
 
     (async () => {
       let token: string | null = null;
@@ -246,6 +276,8 @@ export const chatApi = {
       };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
+      resetWatchdog();
+
       let response: Response;
       try {
         response = await fetch(`${API_BASE}/api/chat?stream=true`, {
@@ -255,24 +287,27 @@ export const chatApi = {
           signal: controller.signal,
         });
       } catch (err) {
+        clearWatchdog();
         if ((err as Error)?.name === "AbortError") return;
         callbacks.onError?.(
           `Cannot connect to backend at ${API_BASE}. Is the server running?`,
         );
-        callbacks.onDone?.();
+        triggerDone();
         return;
       }
 
       if (!response.ok) {
+        clearWatchdog();
         callbacks.onError?.(`Server error: HTTP ${response.status}`);
-        callbacks.onDone?.();
+        triggerDone();
         return;
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
+        clearWatchdog();
         callbacks.onError?.("No response body.");
-        callbacks.onDone?.();
+        triggerDone();
         return;
       }
 
@@ -283,6 +318,9 @@ export const chatApi = {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+
+          // Reset watchdog on receiving fresh stream bytes
+          resetWatchdog();
 
           buffer += decoder.decode(value, { stream: true });
           // SSE lines: "data: {...}\n\n"
@@ -307,6 +345,8 @@ export const chatApi = {
               callbacks.onSession?.(event["session_id"] as string);
             } else if (type === "phase") {
               callbacks.onPhase?.(event["phase"] as StreamPhase);
+            } else if (type === "reset") {
+              callbacks.onReset?.();
             } else if (type === "token") {
               callbacks.onToken?.(event["content"] as string);
             } else if (type === "meta") {
@@ -314,7 +354,8 @@ export const chatApi = {
             } else if (type === "error") {
               callbacks.onError?.(event["content"] as string);
             } else if (type === "done") {
-              callbacks.onDone?.();
+              clearWatchdog();
+              triggerDone();
               return;
             }
           }
@@ -323,8 +364,9 @@ export const chatApi = {
         if ((err as Error)?.name === "AbortError") return;
         callbacks.onError?.("Stream connection lost.");
       } finally {
+        clearWatchdog();
         reader.releaseLock();
-        callbacks.onDone?.();
+        triggerDone();
       }
     })();
 

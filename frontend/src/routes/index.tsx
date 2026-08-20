@@ -363,6 +363,18 @@ function AnalyzerPage() {
           onPhase: (phase) => {
             setStreamingPhase(phase);
           },
+          onReset: () => {
+            setMessages((current) => {
+              const idx = current.findIndex((m) => m.id === assistantMsgId);
+              if (idx === -1) return current;
+              const updated = [...current];
+              updated[idx] = {
+                ...updated[idx],
+                content: "",
+              };
+              return updated;
+            });
+          },
           onToken: (token) => {
             setMessages((current) => {
               const idx = current.findIndex((m) => m.id === assistantMsgId);

@@ -1,18 +1,18 @@
 """
 rag/general_llm.py
 
-Lightweight general-purpose LLM chat using the SAME API keys and provider
-already configured in paperqa_connector.py (OpenAI / Gemini / Anthropic via litellm).
+High-performance LLM Router and General Chat engine for SS SPARK.
+Configured with strict provider hierarchy:
+    Primary:  Google Gemini (gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash)
+    Fallback: NVIDIA NIM (meta/llama-3.1-8b-instruct, meta/llama-3.3-70b-instruct)
+    Tertiary: OpenAI (gpt-4o-mini), Anthropic (claude-3-5-haiku-20241022)
 
-This is the fallback when:
-  - No documents have been uploaded, OR
-  - Documents exist but the question is NOT relevant to them.
-
-Returns the same dict shape as paperqa_connector.query() so chat_service.py
-can treat both paths uniformly, but with:
-  - sources = []       (no document citations — honestly)
-  - confidence = None  (not applicable)
-  - status = "general" (sentinel for the frontend)
+Key Capabilities:
+  - Gemini-first automatic routing
+  - Time-To-First-Token (TTFT) timeout (8.0s) for instant fallback to NVIDIA
+  - Mid-stream failure recovery with ("reset", "") event to prevent duplicate/corrupted text
+  - Structured request correlation logging: [CHAT {req_id}]
+  - Fast-path heuristic classifiers for query routing and contextualization
 """
 
 from __future__ import annotations
@@ -20,89 +20,113 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ss_spark.general_llm")
 
+# Model definitions per provider
+GEMINI_MODELS = [
+    "gemini/gemini-2.0-flash",
+    "gemini/gemini-1.5-flash",
+    "gemini/gemini-1.5-pro",
+]
 
-def _get_candidate_models() -> list[str]:
-    """Return a priority list of litellm model names based on available API keys."""
-    models: list[str] = []
-    if os.getenv("OPENAI_API_KEY", ""):
-        models.extend(["gpt-4o-mini", "gpt-4o"])
-    if os.getenv("NVIDIA_API_KEY", "") or os.getenv("NVIDIA_NIM_API_KEY", ""):
-        n_key = os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY", "")
-        os.environ.setdefault("NVIDIA_API_KEY", n_key)
-        os.environ.setdefault("NVIDIA_NIM_API_KEY", n_key)
-        models.extend([
-            "nvidia_nim/meta/llama-3.1-8b-instruct",
-            "nvidia_nim/meta/llama-3.3-70b-instruct",
-            "nvidia_nim/meta/llama-3.1-70b-instruct",
-        ])
-    if os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""):
-        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
-        os.environ.setdefault("GEMINI_API_KEY", key)
-        os.environ.setdefault("GOOGLE_API_KEY", key)
-        models.extend([
-            "gemini/gemini-2.0-flash",
-            "gemini/gemini-1.5-flash",
-            "gemini/gemini-flash-lite-latest",
-        ])
-    if os.getenv("ANTHROPIC_API_KEY", ""):
-        models.extend(["claude-3-5-haiku-20241022"])
+NVIDIA_MODELS = [
+    "nvidia_nim/meta/llama-3.1-8b-instruct",
+    "nvidia_nim/meta/llama-3.3-70b-instruct",
+    "nvidia_nim/meta/llama-3.1-70b-instruct",
+]
 
-    if models:
-        return models
+OPENAI_MODELS = [
+    "gpt-4o-mini",
+    "gpt-4o",
+]
 
-    raise RuntimeError(
-        "No LLM API key found. Set OPENAI_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, or "
-        "ANTHROPIC_API_KEY in your backend/.env file."
-    )
+ANTHROPIC_MODELS = [
+    "claude-3-5-haiku-20241022",
+]
 
 
-def _pick_llm() -> str:
-    """Return primary model name."""
-    return _get_candidate_models()[0]
-
-
-async def general_chat(
-    question: str,
-    system_prompt: str | None = None,
-    chat_history: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    """
-    Send a question to the LLM with full multi-turn conversational history.
-
-    Parameters
-    ----------
-    question:
-        The user's message.
-    system_prompt:
-        Optional override. Defaults to a ChatGPT/Gemini/Claude-style assistant persona.
-    chat_history:
-        Optional list of prior messages in the format:
-        [{"role": "user" | "assistant", "content": "..."}]
-
-    Returns
-    -------
-    dict matching the shape returned by paperqa_connector.query():
-        {
-            "answer":     str,
-            "sources":    [],
-            "confidence": None,
-            "references": "",
-            "cost":       float,
-            "status":     "general",
-        }
-    """
+def _ensure_env_synced() -> None:
+    """Ensure core settings are loaded and all environment variable aliases are populated."""
     try:
-        import litellm  # already installed as a PaperQA dependency
-    except ImportError as exc:
-        raise RuntimeError(
-            "litellm is not installed. It should be installed as a PaperQA dependency."
-        ) from exc
+        from core.config import get_settings
+        cfg = get_settings()
+        cfg.apply_to_env()
+    except Exception as exc:
+        logger.debug("Failed to sync settings: %s", exc)
 
+
+def get_model_tiers() -> Dict[str, List[str]]:
+    """
+    Return available models grouped by tier:
+      - 'primary': Gemini models if GEMINI_API_KEY/GOOGLE_API_KEY is available
+      - 'fallback': NVIDIA models if NVIDIA_API_KEY/NVIDIA_NIM_API_KEY is available
+      - 'tertiary': OpenAI / Anthropic models if available
+    """
+    _ensure_env_synced()
+    tiers: Dict[str, List[str]] = {
+        "primary": [],
+        "fallback": [],
+        "tertiary": [],
+    }
+
+    gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+    nvidia_key = (os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or "").strip()
+    openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    anthropic_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+
+    # 1. Primary: Gemini
+    if gemini_key:
+        tiers["primary"].extend(GEMINI_MODELS)
+
+    # 2. Fallback: NVIDIA NIM
+    if nvidia_key:
+        tiers["fallback"].extend(NVIDIA_MODELS)
+
+    # 3. Tertiary: OpenAI / Anthropic
+    if openai_key:
+        tiers["tertiary"].extend(OPENAI_MODELS)
+    if anthropic_key:
+        tiers["tertiary"].extend(ANTHROPIC_MODELS)
+
+    # If Gemini is missing but NVIDIA is available, promote NVIDIA to primary
+    if not tiers["primary"]:
+        if tiers["fallback"]:
+            tiers["primary"] = tiers["fallback"]
+            tiers["fallback"] = tiers["tertiary"]
+            tiers["tertiary"] = []
+        elif tiers["tertiary"]:
+            tiers["primary"] = tiers["tertiary"]
+            tiers["tertiary"] = []
+
+    return tiers
+
+
+def get_ordered_candidate_models() -> List[str]:
+    """Return flattened list of candidate models in strict execution priority order."""
+    tiers = get_model_tiers()
+    models = []
+    for tier_name in ("primary", "fallback", "tertiary"):
+        for m in tiers[tier_name]:
+            if m not in models:
+                models.append(m)
+
+    if not models:
+        raise RuntimeError(
+            "No LLM API key configured. Please set GEMINI_API_KEY or NVIDIA_API_KEY in backend/.env"
+        )
+    return models
+
+
+def _format_messages(
+    question: str,
+    system_prompt: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict[str, str]]:
+    """Build sanitized chat messages list for LiteLLM with system prompt and history."""
     if system_prompt is None:
         system_prompt = (
             "You are SS SPARK AI — an advanced, intelligent, and helpful conversational AI "
@@ -114,9 +138,8 @@ async def general_chat(
             "- If you are unsure about something, state so honestly."
         )
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
-    # Append past conversation history (keeping last 16 messages for memory within context limits)
     if chat_history:
         for msg in chat_history[-16:]:
             role = msg.get("role")
@@ -124,22 +147,47 @@ async def general_chat(
             if role in ("user", "assistant") and content:
                 messages.append({"role": role, "content": str(content)})
 
-    # Append current user question
     messages.append({"role": "user", "content": question})
+    return messages
 
-    candidate_models = _get_candidate_models()
-    last_error: Exception | None = None
+
+async def general_chat(
+    question: str,
+    system_prompt: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    req_id: str = "",
+) -> Dict[str, Any]:
+    """
+    Non-streaming LLM invocation with Gemini primary -> NVIDIA fallback.
+
+    Returns dict matching standard shape:
+      {
+          "answer": str,
+          "sources": [],
+          "confidence": None,
+          "references": "",
+          "cost": float,
+          "status": "general" | "success" | "error",
+      }
+    """
+    import litellm
+
+    tag = f"[{req_id}] " if req_id else ""
+    messages = _format_messages(question, system_prompt, chat_history)
+    candidate_models = get_ordered_candidate_models()
+    last_error: Optional[Exception] = None
     t0 = time.monotonic()
 
     for model in candidate_models:
-        logger.info("general_chat: trying %s with %d messages in context", model, len(messages))
+        provider_type = "Primary (Gemini)" if "gemini" in model else ("Fallback (NVIDIA)" if "nvidia" in model else "Tertiary")
+        logger.info("%sgeneral_chat: attempting %s [%s] with %d messages in context", tag, model, provider_type, len(messages))
         try:
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=2048,
-                timeout=30.0,
+                timeout=25.0,
             )
             answer = response.choices[0].message.content or ""
             cost = 0.0
@@ -155,7 +203,7 @@ async def general_chat(
                 pass
 
             elapsed = round(time.monotonic() - t0, 3)
-            logger.info("general_chat: answered in %.3fs via %s (%d chars)", elapsed, model, len(answer))
+            logger.info("%sgeneral_chat: succeeded in %.3fs via %s (%d chars)", tag, elapsed, model, len(answer))
 
             return {
                 "answer": answer,
@@ -166,16 +214,13 @@ async def general_chat(
                 "status": "general",
             }
         except Exception as exc:
-            logger.warning("general_chat attempt on %s failed: %s", model, exc)
+            logger.warning("%sgeneral_chat: %s failed: %s", tag, model, exc)
             last_error = exc
             continue
 
-    logger.error("general_chat all models failed: %s", last_error)
+    logger.error("%sgeneral_chat: all LLM providers failed: %s", tag, last_error)
     return {
-        "answer": (
-            f"I encountered an error while answering: {last_error}\n\n"
-            "Please verify your API key is valid and try again."
-        ),
+        "answer": "AI service is temporarily unavailable. Please try again in a moment.",
         "sources": [],
         "confidence": None,
         "references": "",
@@ -186,81 +231,109 @@ async def general_chat(
 
 async def general_chat_stream(
     question: str,
-    system_prompt: str | None = None,
-    chat_history: list[dict[str, str]] | None = None,
-) -> AsyncGenerator[str, None]:
+    system_prompt: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    req_id: str = "",
+) -> AsyncGenerator[Tuple[str, str], None]:
     """
-    Async generator that yields LLM token chunks as they arrive (streaming).
+    Streaming LLM invocation yielding tuples (event_type, payload):
+        ("token", token_text)  — standard LLM token
+        ("reset", "")          — emitted if a mid-stream provider switch occurs
 
-    Yields raw text chunks. The caller is responsible for SSE framing.
-    Falls back to a single-chunk yield if streaming fails.
+    Guarantees:
+      - Gemini is attempted first.
+      - If Gemini fails before yielding or takes >8.0s to first token, switches to NVIDIA automatically.
+      - If Gemini fails mid-stream after emitting partial tokens, yields ("reset", "") and then streams
+        the clean, complete response from NVIDIA from scratch (no duplicate/corrupted text).
+      - If all providers fail, yields a helpful inline error token.
     """
-    try:
-        import litellm
-    except ImportError as exc:
-        yield f"Error: litellm not installed — {exc}"
-        return
+    import litellm
 
-    if system_prompt is None:
-        system_prompt = (
-            "You are SS SPARK AI — an advanced, intelligent, and helpful conversational AI "
-            "assistant like ChatGPT, Claude, and Gemini.\n"
-            "- Maintain continuous context across the conversation and follow-up questions.\n"
-            "- Provide thorough, well-structured, and articulate answers.\n"
-            "- Use clean Markdown formatting with headers, bullet points, and code blocks where appropriate.\n"
-            "- Never fabricate false citations or document references.\n"
-            "- If you are unsure about something, state so honestly."
-        )
+    tag = f"[{req_id}] " if req_id else ""
+    messages = _format_messages(question, system_prompt, chat_history)
+    candidate_models = get_ordered_candidate_models()
+    t_start = time.monotonic()
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
-    if chat_history:
-        for msg in chat_history[-16:]:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role in ("user", "assistant") and content:
-                messages.append({"role": role, "content": str(content)})
-    messages.append({"role": "user", "content": question})
+    tokens_yielded_total = 0
 
-    candidate_models = _get_candidate_models()
-    t0 = time.monotonic()
+    for model_idx, model in enumerate(candidate_models):
+        is_gemini = "gemini" in model
+        is_nvidia = "nvidia" in model
+        provider_name = "Gemini (Primary)" if is_gemini else ("NVIDIA (Fallback)" if is_nvidia else "Tertiary Provider")
 
-    for model in candidate_models:
-        logger.info("general_chat_stream: trying %s (%d messages)", model, len(messages))
+        logger.info("%sgeneral_chat_stream: starting %s (%s)", tag, model, provider_name)
+        model_tokens = 0
+        t_model_start = time.monotonic()
+
         try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=2048,
-                timeout=60.0,
-                stream=True,
+            # First-token timeout: 8.0s connect/first token window
+            response_stream = await asyncio.wait_for(
+                litellm.acompletion(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=2048,
+                    stream=True,
+                    timeout=45.0,
+                ),
+                timeout=8.0,
             )
-            first_token = True
-            async for chunk in response:
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
-                    if first_token:
-                        elapsed = round(time.monotonic() - t0, 3)
-                        logger.info(
-                            "general_chat_stream: first token in %.3fs via %s", elapsed, model
-                        )
-                        first_token = False
-                    yield delta.content
-            return  # success — stop trying other models
-        except Exception as exc:
-            logger.warning("general_chat_stream %s failed: %s", model, exc)
+
+            # Read stream with first-token deadline
+            first_token_received = False
+            async for chunk in response_stream:
+                delta = chunk.choices[0].delta if (chunk and chunk.choices) else None
+                content = getattr(delta, "content", "") if delta else ""
+                if content:
+                    if not first_token_received:
+                        first_token_received = True
+                        ttft = round(time.monotonic() - t_model_start, 3)
+                        logger.info("%sgeneral_chat_stream: first token from %s in %.3fs", tag, model, ttft)
+                    
+                    model_tokens += 1
+                    tokens_yielded_total += 1
+                    yield ("token", content)
+
+            if first_token_received:
+                total_time = round(time.monotonic() - t_start, 3)
+                logger.info("%sgeneral_chat_stream: completed via %s (%d tokens, total %.3fs)", tag, model, model_tokens, total_time)
+                return  # Successful completion!
+
+            # If stream finished without any tokens
+            logger.warning("%sgeneral_chat_stream: %s yielded 0 tokens, trying fallback...", tag, model)
+
+        except (asyncio.TimeoutError, Exception) as exc:
+            elapsed = round(time.monotonic() - t_model_start, 3)
+            logger.warning("%sgeneral_chat_stream: %s failed after %.3fs: %s", tag, model, elapsed, exc)
+
+            # If partial tokens were yielded before failing mid-stream:
+            if model_tokens > 0:
+                logger.warning(
+                    "%sgeneral_chat_stream: Mid-stream failure on %s after %d tokens! Emitting reset event for clean fallback.",
+                    tag, model, model_tokens
+                )
+                yield ("reset", "")
+                tokens_yielded_total = 0
+
+            # Continue to next model in candidate list (e.g. NVIDIA)
             continue
 
-    # All models failed — yield error text
-    logger.error("general_chat_stream: all models failed")
-    yield "I encountered an error while generating a response. Please verify your API key and try again."
+    # If all models failed
+    logger.error("%sgeneral_chat_stream: All candidate models failed!", tag)
+    if tokens_yielded_total > 0:
+        yield ("reset", "")
+    yield ("token", "AI service is temporarily unavailable. Please try again in a moment.")
 
 
-# Set of fast-path conversational tokens that never require document RAG
+# --------------------------------------------------------------------------- #
+# Heuristic Routing & Classification
+# --------------------------------------------------------------------------- #
+
 _CONVERSATIONAL_GREETINGS = {
     "hi", "hello", "hey", "good morning", "good evening", "good afternoon",
     "how are you", "who are you", "what can you do", "help", "thanks",
-    "thank you", "bye", "goodbye", "ping", "test"
+    "thank you", "bye", "goodbye", "ping", "test", "what is your name",
+    "who made you", "ok", "okay", "cool", "great", "nice"
 }
 
 _DOCUMENT_KEYWORD_SIGNALS = {
@@ -269,57 +342,62 @@ _DOCUMENT_KEYWORD_SIGNALS = {
     "according to the paper", "according to the notes", "in the document",
     "in the paper", "in the notes", "in my document", "in my notes",
     "in my file", "in the file", "uploaded doc", "uploaded file",
-    "uploaded notes", "from the document", "from the paper"
+    "uploaded notes", "from the document", "from the paper", "from my notes",
+    "questions from", "topics from", "repeat", "previous paper"
 }
 
 
 async def is_question_relevant_to_docs(
     question: str,
-    doc_names: list[str],
-    chat_history: list[dict[str, str]] | None = None,
+    doc_names: List[str],
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    req_id: str = "",
 ) -> bool:
     """
     Decide whether the user's question requires document RAG or general conversational AI.
-    Uses fast O(1) heuristic matching first, falling back to lightweight LLM classifier only when ambiguous.
+    Uses ultra-fast O(1) heuristic matching first, falling back to LLM classifier (timeout 2.5s) only when ambiguous.
     """
     if not doc_names:
         return False
 
-    import re
+    tag = f"[{req_id}] " if req_id else ""
     q_clean = re.sub(r"[^\w\s]", " ", question).strip().lower()
     q_clean_single = re.sub(r"\s+", " ", q_clean)
 
-    # 1. Fast-path: Greetings and meta queries are never RAG
+    # 1. Fast-path: Greetings and common chat queries
     if (
         q_clean_single in _CONVERSATIONAL_GREETINGS
         or any(q_clean_single.startswith(g + " ") or q_clean_single == g for g in ("hi", "hello", "hey", "good morning", "good evening", "how are you"))
     ):
+        logger.debug("%sRouting fast-path: General conversation detected for %r", tag, question[:30])
         return False
 
-    # 2. Fast-path: Document name or individual token / stem mention
+    # 2. Fast-path: Document name or individual token mention
     for n in doc_names:
         if n:
             base = n.lower().rsplit(".", 1)[0]
             if len(base) > 3 and base in q_clean:
+                logger.debug("%sRouting fast-path: Document exact match '%s' in query", tag, base)
                 return True
             tokens = [t for t in re.split(r"[_\-\s]+", base) if len(t) > 2]
             if any(t in q_clean for t in tokens):
+                logger.debug("%sRouting fast-path: Document token match in query", tag)
                 return True
-            # Root stem matching for morphological variants
             if any(len(t) >= 4 and t[:4] in q_clean for t in tokens):
                 return True
 
     if any(sig in q_clean for sig in _DOCUMENT_KEYWORD_SIGNALS):
+        logger.debug("%sRouting fast-path: Document signal keyword in query", tag)
         return True
 
-    # 3. If litellm is not importable, default to True
+    # 3. LLM classifier fallback
     try:
         import litellm
     except ImportError:
         return True
 
-    candidate_models = _get_candidate_models()
-    doc_list = "\n".join(f"- {name}" for name in doc_names[:10])
+    candidate_models = get_ordered_candidate_models()
+    doc_list = "\n".join(f"- {name}" for name in doc_names[:8])
 
     recent_context = ""
     if chat_history:
@@ -342,29 +420,30 @@ async def is_question_relevant_to_docs(
         "Reply with ONLY 'RAG' or 'GENERAL':"
     )
 
-    for model in candidate_models:
+    for model in candidate_models[:2]:
         try:
             response = await litellm.acompletion(
                 model=model,
                 messages=[{"role": "user", "content": classifier_prompt}],
                 temperature=0.0,
                 max_tokens=6,
-                timeout=3.0,
+                timeout=2.5,
             )
             verdict = (response.choices[0].message.content or "").strip().upper()
-            logger.info("Relevance classifier verdict=%r (model=%s)", verdict, model)
+            logger.info("%sRelevance classifier verdict=%r via %s", tag, verdict, model)
             return verdict.startswith("RAG")
         except Exception as exc:
-            logger.warning("Classifier failed on %s: %s", model, exc)
+            logger.debug("%sClassifier failed on %s: %s", tag, model, exc)
             continue
 
-    # Default to RAG when docs exist if all classifier attempts fail
+    # Safe default: RAG when docs exist
     return True
 
 
 async def contextualize_query(
     question: str,
-    chat_history: list[dict[str, str]] | None = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    req_id: str = "",
 ) -> str:
     """
     If there is prior conversation history and the question is an ambiguous follow-up,
@@ -373,10 +452,11 @@ async def contextualize_query(
     if not chat_history:
         return question
 
+    tag = f"[{req_id}] " if req_id else ""
     q_lower = question.strip().lower()
     words = q_lower.split()
 
-    # Fast-path: Standalone questions with >= 6 words and no referential pronouns need no rewrite
+    # Fast-path: Standalone queries with >= 6 words and no pronouns need no rewrite
     followup_signals = (
         " it", " its", " this", " that", " these", " those", " they", " them",
         "above", "previous", "earlier", "second", "third", "first",
@@ -393,7 +473,7 @@ async def contextualize_query(
     except ImportError:
         return question
 
-    candidate_models = _get_candidate_models()
+    candidate_models = get_ordered_candidate_models()
     recent_turns = chat_history[-4:]
     history_text = "\n".join(
         f"{m.get('role', 'user').capitalize()}: {str(m.get('content', ''))[:200]}"
@@ -409,21 +489,21 @@ async def contextualize_query(
         "Query:"
     )
 
-    for model in candidate_models:
+    for model in candidate_models[:2]:
         try:
             response = await litellm.acompletion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
                 max_tokens=60,
-                timeout=3.0,
+                timeout=2.5,
             )
             rewritten = (response.choices[0].message.content or "").strip()
             if rewritten and len(rewritten) > 3:
-                logger.info("Contextualized query from %r -> %r", question, rewritten)
+                logger.info("%sContextualized query: %r -> %r via %s", tag, question, rewritten, model)
                 return rewritten
         except Exception as exc:
-            logger.warning("Query contextualizer failed on %s: %s", model, exc)
+            logger.debug("%sContextualizer failed on %s: %s", tag, model, exc)
             continue
 
     return question

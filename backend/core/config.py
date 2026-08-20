@@ -198,6 +198,28 @@ class Settings(BaseSettings):
         return bool(self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY)
 
     @property
+    def primary_llm_provider(self) -> str:
+        """Return the primary provider name based on active keys."""
+        if self.has_gemini:
+            return "gemini"
+        if self.has_nvidia:
+            return "nvidia"
+        if self.has_openai:
+            return "openai"
+        if self.has_anthropic:
+            return "anthropic"
+        return "none"
+
+    @property
+    def fallback_llm_provider(self) -> str:
+        """Return the fallback provider name based on active keys."""
+        if self.has_gemini and self.has_nvidia:
+            return "nvidia"
+        if (self.has_gemini or self.has_nvidia) and self.has_openai:
+            return "openai"
+        return "none"
+
+    @property
     def has_any_llm_key(self) -> bool:
         return self.has_openai or self.has_gemini or self.has_anthropic or self.has_nvidia
 
@@ -205,20 +227,21 @@ class Settings(BaseSettings):
         """Push API keys back into os.environ so PaperQA and LiteLLM pick them up."""
         if self.OPENAI_API_KEY:
             os.environ["OPENAI_API_KEY"] = self.OPENAI_API_KEY
-        if self.GEMINI_API_KEY:
-            os.environ["GEMINI_API_KEY"] = self.GEMINI_API_KEY
-            # MED-8: LiteLLM uses GOOGLE_API_KEY — keep both in sync
-            os.environ["GOOGLE_API_KEY"] = self.GEMINI_API_KEY
-        if self.GOOGLE_API_KEY and not self.GEMINI_API_KEY:
-            # If only GOOGLE_API_KEY is set, populate GEMINI_API_KEY too
-            os.environ["GOOGLE_API_KEY"] = self.GOOGLE_API_KEY
-            os.environ["GEMINI_API_KEY"] = self.GOOGLE_API_KEY
+        
+        # Sync Gemini keys
+        gemini_val = self.GEMINI_API_KEY or self.GOOGLE_API_KEY
+        if gemini_val:
+            os.environ["GEMINI_API_KEY"] = gemini_val
+            os.environ["GOOGLE_API_KEY"] = gemini_val
+
         if self.ANTHROPIC_API_KEY:
             os.environ["ANTHROPIC_API_KEY"] = self.ANTHROPIC_API_KEY
-        if self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY:
-            n_key = self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY
-            os.environ["NVIDIA_API_KEY"] = n_key
-            os.environ["NVIDIA_NIM_API_KEY"] = n_key
+
+        # Sync NVIDIA keys
+        nvidia_val = self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY
+        if nvidia_val:
+            os.environ["NVIDIA_API_KEY"] = nvidia_val
+            os.environ["NVIDIA_NIM_API_KEY"] = nvidia_val
 
 
 @lru_cache(maxsize=1)

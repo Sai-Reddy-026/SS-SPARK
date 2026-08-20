@@ -79,27 +79,26 @@ def _build_settings():
     else:
         embed_name = "st-all-MiniLM-L6-v2"
 
-    # Pick the best available LLM
-    if openai_key:
-        llm_name = "gpt-4o-mini"
-        logger.info("PaperQA connector: using OpenAI (model=%s)", llm_name)
+    # Pick the best available LLM (Gemini Primary -> NVIDIA Fallback -> OpenAI -> Anthropic)
+    if gemini_key:
+        llm_name = "gemini/gemini-2.0-flash"
+        os.environ["GEMINI_API_KEY"] = gemini_key
+        os.environ["GOOGLE_API_KEY"] = gemini_key  # litellm also reads GOOGLE_API_KEY
+        logger.info("PaperQA connector: using Gemini (model=%s)", llm_name)
     elif nvidia_key:
         llm_name = "nvidia_nim/meta/llama-3.1-8b-instruct"
         os.environ["NVIDIA_API_KEY"] = nvidia_key
         os.environ["NVIDIA_NIM_API_KEY"] = nvidia_key
         logger.info("PaperQA connector: using NVIDIA NIM (model=%s)", llm_name)
-    elif gemini_key:
-        llm_name = "gemini/gemini-3.5-flash"
-        os.environ["GEMINI_API_KEY"] = gemini_key
-        os.environ["GOOGLE_API_KEY"] = gemini_key  # litellm also reads GOOGLE_API_KEY
-        logger.info("PaperQA connector: using Gemini (model=%s)", llm_name)
+    elif openai_key:
+        llm_name = "gpt-4o-mini"
+        logger.info("PaperQA connector: using OpenAI (model=%s)", llm_name)
     elif anthropic_key:
         llm_name = "claude-3-5-haiku-20241022"
         logger.info("PaperQA connector: using Anthropic (model=%s)", llm_name)
     else:
         raise RuntimeError(
-            "No LLM API key found. Set OPENAI_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, "
-            "or ANTHROPIC_API_KEY in your .env file."
+            "No LLM API key found. Set GEMINI_API_KEY or NVIDIA_API_KEY in your backend/.env file."
         )
 
     # Disable online journal queries (Crossref/Semantic Scholar) for fast local doc indexing

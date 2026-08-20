@@ -265,13 +265,34 @@ app.mount("/uploads", StaticFiles(directory=str(_cfg.UPLOAD_DIR)), name="uploads
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 async def health():
-    """Quick health-check endpoint."""
+    """Quick health-check endpoint reporting status of LLMs and databases."""
     from rag import paperqa_connector as pqa
-    from database.models import get_documents
+    from database.models import get_documents, get_db
+    from rag.vector_store import get_vector_store
+    from core.config import get_settings
 
+    cfg = get_settings()
     docs = await get_documents()
+    db = get_db()
+
+    vector_status = "in-memory"
+    try:
+        vs = get_vector_store()
+        if vs.qdrant_client is not None:
+            vector_status = "qdrant"
+        elif vs.chroma_collection is not None:
+            vector_status = "chromadb"
+    except Exception:
+        pass
+
     return {
         "status": "ok",
+        "gemini": "configured" if cfg.has_gemini else "missing",
+        "nvidia": "configured" if cfg.has_nvidia else "missing",
+        "primary_provider": cfg.primary_llm_provider,
+        "fallback_provider": cfg.fallback_llm_provider,
+        "mongodb": "connected" if db is not None else "in-memory-fallback",
+        "vector_store": vector_status,
         "documents_in_db": len(docs),
         "paperqa_indexed": pqa.get_indexed_count(),
     }

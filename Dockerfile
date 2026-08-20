@@ -3,11 +3,14 @@
 # ============================================================
 FROM python:3.12-slim
 
-# Install system dependencies: Tesseract OCR, Poppler/MuPDF tools, build essentials
+# Install system dependencies: Tesseract OCR (with English, OSD, Hindi, Telugu), Poppler/MuPDF tools, build essentials
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     tesseract-ocr \
     tesseract-ocr-eng \
+    tesseract-ocr-osd \
+    tesseract-ocr-hin \
+    tesseract-ocr-tel \
     libmagic1 \
     curl \
     git \

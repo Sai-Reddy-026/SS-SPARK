@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -39,6 +40,24 @@ from services.chat_service import ask_question, ask_question_stream
 logger = logging.getLogger("ss_spark.chat_api")
 router = APIRouter(tags=["Chat"])
 
+# ── RAT-01: Thread-safe Sliding Window Rate Limiter ──────────────────────────
+_chat_rate_buckets: dict[str, list[float]] = {}
+_CHAT_RATE_LIMIT = 30  # requests per minute per IP
+_CHAT_RATE_WINDOW = 60.0  # seconds
+
+
+def _check_chat_rate_limit(client_ip: str) -> tuple[bool, int]:
+    now = time.monotonic()
+    bucket = _chat_rate_buckets.setdefault(client_ip, [])
+    window_start = now - _CHAT_RATE_WINDOW
+    _chat_rate_buckets[client_ip] = [t for t in bucket if t > window_start]
+    if len(_chat_rate_buckets[client_ip]) >= _CHAT_RATE_LIMIT:
+        oldest = _chat_rate_buckets[client_ip][0]
+        retry_after = int(_CHAT_RATE_WINDOW - (now - oldest)) + 1
+        return False, retry_after
+    _chat_rate_buckets[client_ip].append(now)
+    return True, 0
+
 
 class ChatRequest(BaseModel):
     question: str
@@ -48,15 +67,22 @@ class ChatRequest(BaseModel):
 @router.post("/api/chat")
 async def chat_endpoint(
     req: ChatRequest,
+    request: Request,
     stream: bool = Query(default=True, description="Stream tokens via SSE (default true)"),
     current_user: Optional[UserRecord] = Depends(get_optional_user),
 ):
     """
-    Submit a question for AI answering.
+    Submit a question for AI answering with rate limiting (RAT-01).
     Automatically routes between PaperQA RAG and general conversational AI.
-
-    Set ?stream=false to receive a legacy JSON response (no streaming).
     """
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, retry_after = _check_chat_rate_limit(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Please wait {retry_after} seconds before sending more questions.",
+            headers={"Retry-After": str(retry_after)},
+        )
     if not req.question or not req.question.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

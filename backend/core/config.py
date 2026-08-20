@@ -143,11 +143,13 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------ #
-    # RAG / Chunking
+    # RAG / Chunking / OCR
     # ------------------------------------------------------------------ #
     CHUNK_SIZE: int = Field(default=500, description="Target token size for text chunks")
     CHUNK_OVERLAP: int = Field(default=50, description="Token overlap between consecutive chunks")
     TOP_K_RESULTS: int = Field(default=5, description="Number of chunks to retrieve per query")
+    OCR_LANG: str = Field(default="eng", description="Tesseract OCR language configuration (e.g. 'eng', 'eng+tel', 'eng+hin')")
+    OCR_DPI: int = Field(default=200, description="DPI resolution for rendering scanned PDF pages during OCR extraction")
 
     # ------------------------------------------------------------------ #
     # Server
@@ -162,6 +164,7 @@ class Settings(BaseSettings):
         ],
         description="CORS-allowed origins",
     )
+    CHAT_RATE_LIMIT_PER_MINUTE: int = Field(default=30, description="Max chat requests per minute per client IP")
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)
 

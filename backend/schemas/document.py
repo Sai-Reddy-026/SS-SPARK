@@ -20,6 +20,7 @@ class UploadedDoc(BaseModel):
     chunk_count: int = 0
     file_path: str = ""
     user_id: Optional[str] = None
+    sha256: Optional[str] = None
     uploaded_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )

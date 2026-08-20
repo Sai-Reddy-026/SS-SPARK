@@ -70,6 +70,7 @@ async def init_db(mongo_uri: str, db_name: str = "ss_spark") -> None:
         await _db.documents.create_index("id", unique=True)
         await _db.documents.create_index([("id", 1), ("user_id", 1)])
         await _db.documents.create_index([("user_id", 1), ("id", 1)])
+        await _db.documents.create_index([("user_id", 1), ("sha256", 1)])
         await _db.chat_messages.create_index([("session_id", 1), ("created_at", 1)])
         await _db.chat_messages.create_index([("user_id", 1), ("created_at", -1)])
         await _db.chat_sessions.create_index([("user_id", 1), ("updated_at", -1)])
@@ -80,10 +81,32 @@ async def init_db(mongo_uri: str, db_name: str = "ss_spark") -> None:
         logger.info("MongoDB connection and indexes initialized successfully.")
     except Exception as exc:
         logger.warning(
-            "MongoDB unavailable (%s). Falling back to in-memory persistence mode for local dev.",
+            "MongoDB not available (%s) — using thread-safe in-memory store for documents & chat.",
             exc,
         )
         _db = None
+
+
+async def get_document_by_hash(user_id: Optional[str], sha256_hash: str) -> Optional[UploadedDoc]:
+    """Fetch existing document by content hash to prevent duplicate embedding (UPL-01)."""
+    if not sha256_hash:
+        return None
+    if _db is not None:
+        query: Dict[str, Any] = {"sha256": sha256_hash}
+        if user_id:
+            query["user_id"] = user_id
+        else:
+            query["user_id"] = None
+        item = await _db.documents.find_one(query)
+        if item:
+            item.pop("_id", None)
+            return UploadedDoc(**item)
+        return None
+    else:
+        for d in _mem_docs.values():
+            if d.sha256 == sha256_hash and d.user_id == user_id:
+                return d
+        return None
 
 
 def get_db() -> Optional[AsyncIOMotorDatabase]:
@@ -209,11 +232,23 @@ async def get_history(
     limit: int = 50,
     user_id: Optional[str] = None,
 ) -> List[ChatMessage]:
-    """Retrieve message history for a session."""
+    """
+    Retrieve message history for a session with strict user isolation (SEC-04).
+    Prevents cross-tenant chat history leakage.
+    """
     if _db is not None:
+        # Check session ownership first if session exists
+        session_doc = await _db.chat_sessions.find_one({"id": session_id})
+        if session_doc:
+            session_owner = session_doc.get("user_id")
+            if session_owner and session_owner != "anonymous" and session_owner != user_id:
+                # Session belongs to another user -> return empty list (IDOR blocked)
+                return []
         query: Dict[str, Any] = {"session_id": session_id}
         if user_id:
-            query["$or"] = [{"user_id": user_id}, {"user_id": None}]
+            query["user_id"] = user_id
+        else:
+            query["user_id"] = None
         cursor = _db.chat_messages.find(query).sort("created_at", 1).limit(limit)
         messages = []
         async for item in cursor:
@@ -221,9 +256,15 @@ async def get_history(
             messages.append(ChatMessage(**item))
         return messages
     else:
+        if session_id in _mem_sessions:
+            session_owner = _mem_sessions[session_id].user_id
+            if session_owner and session_owner != "anonymous" and session_owner != user_id:
+                return []
         res = [m for m in _mem_messages if m.session_id == session_id]
         if user_id:
-            res = [m for m in res if m.user_id == user_id or m.user_id is None]
+            res = [m for m in res if m.user_id == user_id]
+        else:
+            res = [m for m in res if m.user_id is None or m.user_id == "anonymous"]
         return res[-limit:]
 
 
@@ -245,7 +286,7 @@ async def get_sessions(user_id: str) -> List[ChatSession]:
 
 
 async def get_session_by_id(session_id: str, user_id: Optional[str] = None) -> Optional[ChatSession]:
-    """Fetch a single chat session."""
+    """Fetch a single chat session with user ownership."""
     if _db is not None:
         query: Dict[str, Any] = {"id": session_id}
         if user_id:
@@ -276,18 +317,23 @@ async def update_session(
     updates: Dict[str, Any],
     user_id: Optional[str] = None,
 ) -> Optional[ChatSession]:
-    """Update fields on an existing chat session."""
+    """
+    Update fields on an existing chat session with strict ownership.
+    SEC-02 FIX: Unauthenticated / mismatched user_id requests are rejected.
+    """
+    if not user_id:
+        return None
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     if _db is not None:
-        query: Dict[str, Any] = {"id": session_id}
-        if user_id:
-            query["user_id"] = user_id
-        await _db.chat_sessions.update_one(query, {"$set": updates})
+        query: Dict[str, Any] = {"id": session_id, "user_id": user_id}
+        res = await _db.chat_sessions.update_one(query, {"$set": updates})
+        if res.matched_count == 0:
+            return None
         return await get_session_by_id(session_id, user_id)
     else:
         if session_id in _mem_sessions:
             s = _mem_sessions[session_id]
-            if user_id is None or s.user_id == user_id:
+            if s.user_id == user_id:
                 for k, v in updates.items():
                     if hasattr(s, k):
                         setattr(s, k, v)
@@ -296,22 +342,25 @@ async def update_session(
 
 
 async def delete_session(session_id: str, user_id: Optional[str] = None) -> bool:
-    """Delete a chat session and its associated messages."""
+    """
+    Delete a chat session and its associated messages with strict ownership.
+    SEC-02 FIX: Unauthenticated or mismatched user_id requests are rejected.
+    """
+    if not user_id:
+        return False
     if _db is not None:
-        query: Dict[str, Any] = {"id": session_id}
-        if user_id:
-            query["user_id"] = user_id
+        query: Dict[str, Any] = {"id": session_id, "user_id": user_id}
         res = await _db.chat_sessions.delete_one(query)
         if res.deleted_count > 0:
-            await _db.chat_messages.delete_many({"session_id": session_id})
+            await _db.chat_messages.delete_many({"session_id": session_id, "user_id": user_id})
             return True
         return False
     else:
         global _mem_messages
         if session_id in _mem_sessions:
-            if user_id is None or _mem_sessions[session_id].user_id == user_id:
+            if _mem_sessions[session_id].user_id == user_id:
                 del _mem_sessions[session_id]
-                _mem_messages = [m for m in _mem_messages if m.session_id != session_id]
+                _mem_messages = [m for m in _mem_messages if not (m.session_id == session_id and m.user_id == user_id)]
                 return True
         return False
 

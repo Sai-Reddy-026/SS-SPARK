@@ -63,16 +63,18 @@ async def delete_doc(
             detail="Document not found.",
         )
 
-    # 1. Delete vector store chunks
+    # 1. Delete vector store chunks (instant <5ms)
     vs = get_vector_store()
     vs.delete_by_doc_id(doc_id)
 
-    # 2. Evict from PaperQA in-memory index
+    # 2. Evict from PaperQA in-memory index asynchronously (RAG-02 fix)
     if doc.file_path:
-        try:
-            await pqa.remove_document(doc.file_path, user_id=user_id)
-        except Exception as exc:
-            logger.warning("PaperQA document eviction failed: %s", exc)
+        async def _async_pqa_evict(path: str, uid: Optional[str]):
+            try:
+                await pqa.remove_document(path, user_id=uid)
+            except Exception as exc:
+                logger.warning("PaperQA background eviction failed: %s", exc)
+        asyncio.create_task(_async_pqa_evict(doc.file_path, user_id))
 
     # 3. Delete file from disk if it exists
     if doc.file_path and Path(doc.file_path).exists():

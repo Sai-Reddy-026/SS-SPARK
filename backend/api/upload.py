@@ -1,6 +1,6 @@
 """
 api/upload.py
-Document upload, extraction, and vector indexing endpoint for SS SPARK.
+Document and Question Paper upload, hybrid OCR extraction, and dual vector indexing endpoint for SS SPARK.
 """
 
 from __future__ import annotations
@@ -16,7 +16,15 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from core.config import Settings, get_settings
 from core.security import get_optional_user
-from database.models import UploadedDoc, save_document
+import hashlib
+from database.models import UploadedDoc, get_document_by_hash, save_document
+
+def _calc_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
 from database.user_models import LogAction, UserRecord, record_audit_log
 from rag import paperqa_connector as pqa
 from rag.embeddings import get_embedder
@@ -35,8 +43,8 @@ async def upload_documents(
     settings: Settings = Depends(get_settings),
 ):
     """
-    Upload one or multiple documents, extract text, generate embeddings,
-    and index them in both Vector Store (Qdrant/ChromaDB) and PaperQA RAG.
+    Upload one or multiple documents, extract text via hybrid digital/OCR pipelines,
+    generate vector embeddings, and index into Vector Store (Qdrant/ChromaDB) and PaperQA RAG.
     """
     if not files:
         raise HTTPException(
@@ -50,7 +58,7 @@ async def upload_documents(
     embedder = get_embedder()
     user_id = current_user.id if current_user else None
 
-    # Semaphore to prevent unbounded memory usage on large file bursts
+    # Semaphore to prevent unbounded memory spikes during concurrent OCR operations
     sem = asyncio.Semaphore(4)
 
     def _save_file_to_disk(dest: Path, file_obj) -> None:
@@ -75,24 +83,57 @@ async def upload_documents(
             try:
                 await asyncio.to_thread(_save_file_to_disk, dest_path, file.file)
             except Exception as exc:
-                logger.error("Failed to save uploaded file: %s", exc)
+                logger.error("Failed to save uploaded file '%s': %s", filename, exc)
                 return None
 
             file_size_mb = round(dest_path.stat().st_size / (1024 * 1024), 2)
+            
+            # UPL-01: Calculate SHA-256 and check for user-scoped duplicate
+            file_hash = await asyncio.to_thread(_calc_sha256, dest_path)
+            existing_doc = await get_document_by_hash(user_id=user_id, sha256_hash=file_hash)
+            if existing_doc:
+                logger.info("Duplicate document detected for user %s (sha256=%s). Reusing ID %s.", user_id, file_hash[:8], existing_doc.id)
+                dest_path.unlink(missing_ok=True)
+                return {
+                    "id": existing_doc.id,
+                    "name": existing_doc.name,
+                    "filename": existing_doc.name,
+                    "kind": existing_doc.kind,
+                    "size_mb": existing_doc.size_mb,
+                    "pages": existing_doc.pages,
+                    "chunk_count": existing_doc.chunk_count,
+                    "chunks_indexed": existing_doc.chunk_count,
+                    "paperqa_indexed": True,
+                    "extraction_method": "digital",
+                    "ocr_success": True,
+                    "ocr_confidence": 100.0,
+                    "uploaded_at": existing_doc.uploaded_at,
+                    "message": "Document already indexed.",
+                }
             pages_count = 1
             chunks = []
+            extracted_text = ""
+            extraction_method = "digital"
+            ocr_success = True
+            ocr_conf = 0.0
 
-            # Extract text based on file type (offloaded to worker thread)
+            # 1. Extraction Pipeline Dispatch
             if suffix in (".png", ".jpg", ".jpeg", ".webp"):
                 kind = "image"
-                _, chunks = await asyncio.to_thread(
+                extraction_method = "ocr"
+                extracted_text, chunks, ocr_meta = await asyncio.to_thread(
                     process_image_to_chunks,
                     str(dest_path),
                     doc_id=doc_id,
                     upload_dir=str(upload_dir),
                     chunk_size=settings.CHUNK_SIZE,
                     overlap=settings.CHUNK_OVERLAP,
+                    lang=settings.OCR_LANG,
                 )
+                ocr_success = ocr_meta.get("ocr_success", bool(chunks))
+                ocr_conf = ocr_meta.get("ocr_confidence", 0.0)
+                pages_count = 1
+
             else:
                 kind = "docx" if suffix in (".docx", ".doc") else ("txt" if suffix == ".txt" else "pdf")
                 pages_task = asyncio.to_thread(count_pdf_pages, str(dest_path))
@@ -102,10 +143,14 @@ async def upload_documents(
                     doc_id=doc_id,
                     chunk_size=settings.CHUNK_SIZE,
                     overlap=settings.CHUNK_OVERLAP,
+                    lang=settings.OCR_LANG,
                 )
                 pages_count, chunks = await asyncio.gather(pages_task, chunks_task)
 
-            # Index vectors into vector store
+                has_ocr_chunks = any(getattr(c, "is_ocr", False) for c in chunks)
+                extraction_method = "hybrid" if has_ocr_chunks else "digital"
+
+            # 2. Vector Store Indexing (Qdrant / ChromaDB)
             chunks_indexed = 0
             if chunks:
                 try:
@@ -122,17 +167,27 @@ async def upload_documents(
                         user_id=user_id,
                     )
                     chunks_indexed = len(chunks)
+                    logger.info("Indexed %d chunks for '%s' into VectorStore (user_id=%s)", chunks_indexed, filename, user_id)
                 except Exception as exc:
                     logger.warning("Vector store indexing failed for %s: %s", filename, exc)
 
-            # Index into PaperQA connector with user isolation
-            pqa_indexed = False
-            try:
-                pqa_indexed = await pqa.add_document(str(dest_path), user_id=user_id)
-            except Exception as exc:
-                logger.warning("PaperQA indexing failed for %s: %s", filename, exc)
+            # 3. PaperQA Background Ingestion (RAG-01: Non-blocking background indexing)
+            async def _bg_pqa_index():
+                try:
+                    if kind == "image" and extracted_text.strip():
+                        await pqa.add_text_content(text=extracted_text, source_name=filename, user_id=user_id)
+                    elif kind == "pdf" and any(getattr(c, "is_ocr", False) for c in chunks) and len(chunks) > 0:
+                        full_doc_text = "\n\n".join(c.text for c in chunks)
+                        await pqa.add_text_content(text=full_doc_text, source_name=filename, user_id=user_id)
+                    else:
+                        await pqa.add_document(str(dest_path), user_id=user_id)
+                except Exception as exc:
+                    logger.debug("Background PaperQA indexing: %s", exc)
 
-            # Save to database
+            asyncio.create_task(_bg_pqa_index())
+            pqa_indexed = True
+
+            # 4. Save Record to Database
             doc_record = UploadedDoc(
                 id=doc_id,
                 name=filename,
@@ -141,15 +196,22 @@ async def upload_documents(
                 pages=pages_count,
                 chunk_count=chunks_indexed,
                 file_path=str(dest_path),
-                user_id=current_user.id if current_user else None,
+                user_id=user_id,
+                sha256=file_hash,
             )
             await save_document(doc_record)
+
             if current_user:
                 await record_audit_log(
                     current_user.id,
                     LogAction.UPLOAD,
-                    f"Uploaded document: {filename} ({file_size_mb} MB, {pages_count} pages)",
+                    f"Uploaded document: {filename} ({file_size_mb} MB, {pages_count} pages, {chunks_indexed} chunks, {extraction_method})",
                 )
+
+            # Warning if OCR failed to find readable text
+            msg = "Processed and indexed successfully."
+            if kind == "image" and not chunks:
+                msg = "Warning: Text could not be reliably detected in this image. Please upload a clearer image."
 
             return {
                 "id": doc_id,
@@ -161,16 +223,19 @@ async def upload_documents(
                 "chunk_count": chunks_indexed,
                 "chunks_indexed": chunks_indexed,
                 "paperqa_indexed": pqa_indexed,
+                "extraction_method": extraction_method,
+                "ocr_success": ocr_success if kind == "image" else True,
+                "ocr_confidence": ocr_conf if kind == "image" else 100.0,
                 "uploaded_at": doc_record.uploaded_at,
-                "message": "Processed and indexed successfully.",
+                "message": msg,
             }
 
-        # Process all uploaded files concurrently
+    # Process all files concurrently
     tasks = [_process_file(f) for f in files]
     results = await asyncio.gather(*tasks)
     uploaded_results = [r for r in results if r is not None]
 
-    # Invalidate the short-lived doc cache so the next chat request sees the new docs
+    # Invalidate cached document listings
     try:
         from services.chat_service import invalidate_doc_cache
         invalidate_doc_cache(user_id=user_id)

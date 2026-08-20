@@ -3,12 +3,12 @@ services/chat_service.py
 
 Hybrid RAG + General-Chat orchestration for the /api/chat endpoint.
 
-Features & Performance Improvements:
+Performance & Reliability Enhancements:
   - Gemini Primary -> NVIDIA Fallback LLM Router
-  - Parallel routing classifier + query contextualizer (asyncio.gather)
-  - Short-lived cached get_documents() (10s TTL)
-  - SSE streaming via ask_question_stream() with mid-stream reset support
-  - Request correlation IDs: [CHAT {req_id}] with pin-to-pin latency tracking
+  - Zero-LLM Fast Local Deterministic Heuristic (<1ms routing & contextualization)
+  - Hard First-Token Timeout (3.5s) on stream reads
+  - Non-blocking vector retrieval with detailed milestone telemetry
+  - Structured request correlation logging: [CHAT {req_id}]
   - Multi-tenant isolation and user session management
 """
 
@@ -54,27 +54,28 @@ async def ask_question(
     """
     Hybrid RAG + General-Chat pipeline with full multi-turn conversational memory (Non-streaming).
     """
-    from rag.paperqa_connector import query as pqa_query, get_indexed_paths
+    from rag.paperqa_connector import get_indexed_paths
     from rag.general_llm import general_chat, is_question_relevant_to_docs, contextualize_query
     from rag.retriever import retrieve as qdrant_retrieve
     from database import models
     from core.config import get_settings
 
     req_id = f"CHAT-{uuid.uuid4().hex[:6]}"
-    t_total = time.monotonic()
+    t_start = time.perf_counter()
     sid = session_id or str(uuid.uuid4())
 
-    logger.info("[%s] Non-streaming request started | session=%s | user=%s | q_len=%d", req_id, sid[:8], user_id or "anon", len(question))
+    logger.info("[%s] request_start | session=%s | user=%s | q_len=%d", req_id, sid[:8], user_id or "anon", len(question))
 
     # 0. Retrieve conversation history
-    t0 = time.monotonic()
+    t0 = time.perf_counter()
     prior_messages = await models.get_history(session_id=sid, limit=16, user_id=user_id)
     chat_history: List[Dict[str, str]] = [
         {"role": msg.role, "content": msg.content}
         for msg in prior_messages
         if msg.role in ("user", "assistant") and msg.content
     ]
-    logger.info("[%s] History fetch: %.3fs (%d messages)", req_id, time.monotonic() - t0, len(chat_history))
+    hist_ms = round((time.perf_counter() - t0) * 1000, 2)
+    logger.info("[%s] history_complete in %.2fms (%d messages)", req_id, hist_ms, len(chat_history))
 
     # 1. Persist user message
     user_msg = models.ChatMessage(
@@ -86,7 +87,6 @@ async def ask_question(
     await models.save_message(user_msg)
 
     # 2. Route: Check uploaded documents
-    t0 = time.monotonic()
     user_docs = await _get_cached_documents(user_id, models)
     pqa_paths = get_indexed_paths(user_id=user_id)
     doc_names = list(
@@ -94,34 +94,29 @@ async def ask_question(
             {p.split("/")[-1].split("\\")[-1] for p in pqa_paths if p}
         )
     )
-    logger.info("[%s] Doc check: %.3fs (%d docs)", req_id, time.monotonic() - t0, len(doc_names))
 
     pqa_result: Optional[Dict[str, Any]] = None
     citations: List[Dict[str, Any]] = []
 
     if not doc_names:
-        # No documents -> General AI
-        logger.info("[%s] No docs found -> Conversational General LLM", req_id)
-        t0 = time.monotonic()
+        # No documents -> Pure general AI
+        logger.info("[%s] routing_complete in 0.00ms | use_rag=False | reason='no_docs'", req_id)
         pqa_result = await general_chat(
             question=question,
             chat_history=chat_history,
             req_id=req_id,
         )
-        logger.info("[%s] General LLM completed: %.3fs", req_id, time.monotonic() - t0)
 
     else:
-        # Documents exist -> Route in parallel
-        t0 = time.monotonic()
-        use_rag, search_query = await asyncio.gather(
-            is_question_relevant_to_docs(question, doc_names, chat_history=chat_history, req_id=req_id),
-            contextualize_query(question, chat_history=chat_history, req_id=req_id),
-        )
-        logger.info("[%s] Routing: %.3fs (use_rag=%s, search_query=%r)", req_id, time.monotonic() - t0, use_rag, search_query[:60])
+        # Documents exist -> Fast local heuristic routing (<1ms)
+        t_route = time.perf_counter()
+        use_rag = is_question_relevant_to_docs(question, doc_names, chat_history=chat_history, req_id=req_id)
+        search_query = contextualize_query(question, chat_history=chat_history, req_id=req_id)
+        route_ms = round((time.perf_counter() - t_route) * 1000, 2)
+        logger.info("[%s] routing_complete in %.2fms | use_rag=%s | search_query=%r", req_id, route_ms, use_rag, search_query[:60])
 
         if use_rag:
             # RAG Path: Vector retrieval
-            t0 = time.monotonic()
             retrieved_chunks = []
             try:
                 from rag.vector_store import get_vector_store
@@ -135,13 +130,11 @@ async def ask_question(
                     )
                     retrieved_chunks = retrieval_res.chunks
             except Exception as exc:
-                logger.warning("[%s] Vector retrieval failed (non-fatal): %s", req_id, exc)
+                logger.warning("[%s] vector retrieval failed (non-fatal): %s", req_id, exc)
 
-            logger.info("[%s] Retrieval completed: %.3fs (%d chunks)", req_id, time.monotonic() - t0, len(retrieved_chunks))
-
-            valid_chunks = [c for c in retrieved_chunks if c.relevance >= 0.30]
+            valid_chunks = [c for c in retrieved_chunks if c.relevance >= 0.25]
             if valid_chunks:
-                logger.info("[%s] Grounded answer from %d vector chunks", req_id, len(valid_chunks))
+                logger.info("[%s] grounded prompt with %d vector chunks", req_id, len(valid_chunks))
                 context_text = "\n\n".join(
                     f"--- Source: {c.source} (Page {c.page}) ---\n{c.text}"
                     for c in valid_chunks
@@ -152,14 +145,12 @@ async def ask_question(
                     "If the answer is found in the context, cite the source name and page number.\n\n"
                     f"CONTEXT FROM UPLOADED DOCUMENTS:\n{context_text}"
                 )
-                t0 = time.monotonic()
                 grounded_res = await general_chat(
                     question=question,
                     chat_history=chat_history,
                     system_prompt=grounded_prompt,
                     req_id=req_id,
                 )
-                logger.info("[%s] Grounded LLM completed: %.3fs", req_id, time.monotonic() - t0)
                 if grounded_res.get("answer") and grounded_res.get("status") != "error":
                     pqa_result = dict(grounded_res)
                     pqa_result["status"] = "success"
@@ -177,7 +168,6 @@ async def ask_question(
 
             # Fast fallback if no direct chunks
             if pqa_result is None or not citations:
-                logger.info("[%s] Fallback to conversational answer with document guidance", req_id)
                 pqa_result = await general_chat(
                     question=question,
                     chat_history=chat_history,
@@ -186,8 +176,6 @@ async def ask_question(
 
         else:
             # Unrelated to documents -> Pure general AI
-            logger.info("[%s] General path (unrelated to docs)", req_id)
-            t0 = time.monotonic()
             pqa_result = await general_chat(
                 question=question,
                 chat_history=chat_history,
@@ -200,7 +188,6 @@ async def ask_question(
                 ),
                 req_id=req_id,
             )
-            logger.info("[%s] General LLM completed: %.3fs", req_id, time.monotonic() - t0)
 
     # 4. Extract common fields
     primary_source = citations[0]["source"] if citations else "N/A"
@@ -257,8 +244,8 @@ async def ask_question(
         except Exception as sess_err:
             logger.warning("[%s] Session upsert failed (non-fatal): %s", req_id, sess_err)
 
-    total_time = round(time.monotonic() - t_total, 3)
-    logger.info("[%s] TOTAL request time: %.3fs", req_id, total_time)
+    total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+    logger.info("[%s] total_duration %.2fms", req_id, total_ms)
 
     return {
         "success": True,
@@ -305,22 +292,25 @@ async def ask_question_stream(
     from core.config import get_settings
 
     req_id = f"CHAT-{uuid.uuid4().hex[:6]}"
-    t_total = time.monotonic()
+    t_start = time.perf_counter()
     sid = session_id or str(uuid.uuid4())
 
     def _sse(payload: dict) -> str:
         return f"data: {json.dumps(payload)}\n\n"
 
     try:
-        logger.info("[%s] Stream request started | session=%s | user=%s | q_len=%d", req_id, sid[:8], user_id or "anon", len(question))
+        logger.info("[%s] request_start | session=%s | user=%s | q_len=%d", req_id, sid[:8], user_id or "anon", len(question))
 
         # 0. History
+        t0 = time.perf_counter()
         prior_messages = await models.get_history(session_id=sid, limit=16, user_id=user_id)
         chat_history: List[Dict[str, str]] = [
             {"role": msg.role, "content": msg.content}
             for msg in prior_messages
             if msg.role in ("user", "assistant") and msg.content
         ]
+        hist_ms = round((time.perf_counter() - t0) * 1000, 2)
+        logger.info("[%s] history_complete in %.2fms (%d messages)", req_id, hist_ms, len(chat_history))
 
         # 1. Persist user message
         user_msg = models.ChatMessage(
@@ -334,7 +324,7 @@ async def ask_question_stream(
         # Emit session_id immediately so frontend can lock in conversation ID
         yield _sse({"type": "session", "session_id": sid})
 
-        # 2. Route
+        # 2. Route: Check uploaded documents
         user_docs = await _get_cached_documents(user_id, models)
         pqa_paths = get_indexed_paths(user_id=user_id)
         doc_names = list(
@@ -349,7 +339,8 @@ async def ask_question_stream(
         confidence = None
 
         if not doc_names:
-            # No documents -> stream general AI answer
+            # No documents -> stream general AI answer immediately
+            logger.info("[%s] routing_complete in 0.00ms | use_rag=False | reason='no_docs'", req_id)
             yield _sse({"type": "phase", "phase": "generating"})
             system_prompt = (
                 "You are SS SPARK AI — an advanced, intelligent, and helpful conversational AI "
@@ -371,19 +362,16 @@ async def ask_question_stream(
                     yield _sse({"type": "token", "content": payload})
 
         else:
-            # Documents exist -> route in parallel
-            yield _sse({"type": "phase", "phase": "routing"})
-            t_route = time.monotonic()
-            use_rag, search_query = await asyncio.gather(
-                is_question_relevant_to_docs(question, doc_names, chat_history=chat_history, req_id=req_id),
-                contextualize_query(question, chat_history=chat_history, req_id=req_id),
-            )
-            logger.info("[%s] Stream routing: %.3fs (use_rag=%s, search_query=%r)", req_id, time.monotonic() - t_route, use_rag, search_query[:60])
+            # Documents exist -> fast local deterministic heuristic (<1ms)
+            t_route = time.perf_counter()
+            use_rag = is_question_relevant_to_docs(question, doc_names, chat_history=chat_history, req_id=req_id)
+            search_query = contextualize_query(question, chat_history=chat_history, req_id=req_id)
+            route_ms = round((time.perf_counter() - t_route) * 1000, 2)
+            logger.info("[%s] routing_complete in %.2fms | use_rag=%s | search_query=%r", req_id, route_ms, use_rag, search_query[:60])
 
             if use_rag:
                 # RAG path: retrieve chunks, then stream grounded answer
                 yield _sse({"type": "phase", "phase": "retrieving"})
-                t_ret = time.monotonic()
                 retrieved_chunks = []
                 try:
                     from rag.vector_store import get_vector_store
@@ -394,14 +382,13 @@ async def ask_question_stream(
                             search_query,
                             n_results=cfg.TOP_K_RESULTS,
                             user_id=user_id,
+                            req_id=req_id,
                         )
                         retrieved_chunks = retrieval_res.chunks
                 except Exception as exc:
                     logger.warning("[%s] Vector retrieval error: %s", req_id, exc)
 
-                logger.info("[%s] Retrieval completed: %.3fs (%d chunks)", req_id, time.monotonic() - t_ret, len(retrieved_chunks))
-
-                valid_chunks = [c for c in retrieved_chunks if c.relevance >= 0.30]
+                valid_chunks = [c for c in retrieved_chunks if c.relevance >= 0.25]
                 yield _sse({"type": "phase", "phase": "generating"})
 
                 if valid_chunks:
@@ -439,7 +426,7 @@ async def ask_question_stream(
                             yield _sse({"type": "token", "content": payload})
 
                 else:
-                    # No strong vector chunks -> stream conversational answer with document context hint
+                    # No strong vector chunks -> stream conversational answer
                     async for chunk in general_chat_stream(
                         question, chat_history=chat_history, req_id=req_id
                     ):
@@ -538,8 +525,8 @@ async def ask_question_stream(
             "cost": 0.0,
         })
 
-        total_time = round(time.monotonic() - t_total, 3)
-        logger.info("[%s] Stream completed in %.3fs | total_chars=%d", req_id, total_time, len(answer_text))
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+        logger.info("[%s] total_duration %.2fms | total_chars=%d", req_id, total_ms, len(answer_text))
         yield _sse({"type": "done"})
 
     except asyncio.CancelledError:

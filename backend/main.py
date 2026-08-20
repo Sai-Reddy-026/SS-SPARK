@@ -23,14 +23,16 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # --------------------------------------------------------------------------- #
-# Logging
+# Logging (LOG-01 Fix: Avoid duplicate handlers by targeting project logger)
 # --------------------------------------------------------------------------- #
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s — %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger("ss_spark")
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s — %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
 
 
 # --------------------------------------------------------------------------- #
@@ -128,7 +130,7 @@ async def lifespan(app: FastAPI):
                                         sidecar = _Path(file_path).parent / (_Path(file_path).stem + "_ocr.txt")
                                         if not sidecar.exists():
                                             continue
-                                        _, chunks = process_image_to_chunks(
+                                        _, chunks, _ = process_image_to_chunks(
                                             file_path, doc.id, str(cfg.UPLOAD_DIR), cfg.CHUNK_SIZE, cfg.CHUNK_OVERLAP
                                         )
                                     else:
@@ -196,7 +198,8 @@ _cfg = _get_settings()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_origins(_cfg),
-    allow_origin_regex=r"^https:\/\/.*\.vercel\.app$",
+    # SEC-03 FIX: Tightened from wildcard to SS-SPARK preview and production domains
+    allow_origin_regex=r"^https:\/\/(?:[a-zA-Z0-9_-]+\.)?(?:ss-spark|ssspark)(?:-[a-zA-Z0-9_-]+)?\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

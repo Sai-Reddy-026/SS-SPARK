@@ -81,7 +81,18 @@ async def update_user_settings(
     req: UserApiKeysRequest,
     current_user: UserRecord = Depends(get_current_user),
 ):
-    """Save user API keys and activate them in the runtime environment."""
+    """
+    Save system-wide API keys.
+    SEC-01 FIX: Restricted strictly to ADMIN users to prevent multi-tenant key hijacking.
+    """
+    from database.user_models import UserRole
+    if current_user.role != UserRole.ADMIN:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator privileges required to configure system-wide API keys.",
+        )
+
     from core.security import update_api_keys
     from database.models import load_settings, save_settings, SystemSettings
 

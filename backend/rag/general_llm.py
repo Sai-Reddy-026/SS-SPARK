@@ -3,16 +3,17 @@ rag/general_llm.py
 
 High-performance LLM Router and General Chat engine for SS SPARK.
 Configured with strict provider hierarchy:
-    Primary:  Google Gemini (gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash)
-    Fallback: NVIDIA NIM (meta/llama-3.1-8b-instruct, meta/llama-3.3-70b-instruct)
+    Primary:  Google Gemini (gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro)
+    Fallback: NVIDIA NIM (meta/llama-3.1-8b-instruct, meta/llama-3.3-70b-instruct, meta/llama-3.1-70b-instruct)
     Tertiary: OpenAI (gpt-4o-mini), Anthropic (claude-3-5-haiku-20241022)
 
 Key Capabilities:
   - Gemini-first automatic routing
-  - Time-To-First-Token (TTFT) timeout (8.0s) for instant fallback to NVIDIA
+  - Hard First-Token Timeout (3.5s) on __anext__() for instant fallback to NVIDIA
   - Mid-stream failure recovery with ("reset", "") event to prevent duplicate/corrupted text
-  - Structured request correlation logging: [CHAT {req_id}]
-  - Fast-path heuristic classifiers for query routing and contextualization
+  - Fast, deterministic, pure-Python local routing heuristic (<1ms, 0 LLM calls)
+  - Fast, deterministic local query contextualization (<1ms, 0 LLM calls)
+  - Structured request correlation logging: [CHAT {req_id}] with pin-to-pin milestone tracking
 """
 
 from __future__ import annotations
@@ -26,11 +27,14 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("ss_spark.general_llm")
 
+# Hard First-Token Timeout in seconds
+FIRST_TOKEN_TIMEOUT_S = 3.5
+
 # Model definitions per provider
 GEMINI_MODELS = [
     "gemini/gemini-2.0-flash",
+    "gemini/gemini-2.0-flash-lite",
     "gemini/gemini-1.5-flash",
-    "gemini/gemini-1.5-pro",
 ]
 
 NVIDIA_MODELS = [
@@ -179,15 +183,18 @@ async def general_chat(
     t0 = time.monotonic()
 
     for model in candidate_models:
-        provider_type = "Primary (Gemini)" if "gemini" in model else ("Fallback (NVIDIA)" if "nvidia" in model else "Tertiary")
-        logger.info("%sgeneral_chat: attempting %s [%s] with %d messages in context", tag, model, provider_type, len(messages))
+        is_gemini = "gemini" in model
+        is_nvidia = "nvidia" in model
+        provider_name = "gemini" if is_gemini else ("nvidia" if is_nvidia else "tertiary")
+        logger.info("%sllm_start provider=%s model=%s (%d messages)", tag, provider_name, model, len(messages))
+
         try:
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=2048,
-                timeout=25.0,
+                timeout=15.0,
             )
             answer = response.choices[0].message.content or ""
             cost = 0.0
@@ -203,7 +210,7 @@ async def general_chat(
                 pass
 
             elapsed = round(time.monotonic() - t0, 3)
-            logger.info("%sgeneral_chat: succeeded in %.3fs via %s (%d chars)", tag, elapsed, model, len(answer))
+            logger.info("%sllm_complete in %.3fs via %s (%d chars)", tag, elapsed, model, len(answer))
 
             return {
                 "answer": answer,
@@ -214,11 +221,11 @@ async def general_chat(
                 "status": "general",
             }
         except Exception as exc:
-            logger.warning("%sgeneral_chat: %s failed: %s", tag, model, exc)
+            logger.warning("%smodel %s failed (non-fatal): %s", tag, model, exc)
             last_error = exc
             continue
 
-    logger.error("%sgeneral_chat: all LLM providers failed: %s", tag, last_error)
+    logger.error("%sall LLM providers failed: %s", tag, last_error)
     return {
         "answer": "AI service is temporarily unavailable. Please try again in a moment.",
         "sources": [],
@@ -242,9 +249,10 @@ async def general_chat_stream(
 
     Guarantees:
       - Gemini is attempted first.
-      - If Gemini fails before yielding or takes >8.0s to first token, switches to NVIDIA automatically.
+      - First-token timeout (3.5s) is wrapped directly on __anext__() so stalled
+        Gemini streams fail over to NVIDIA immediately without hanging for 45s.
       - If Gemini fails mid-stream after emitting partial tokens, yields ("reset", "") and then streams
-        the clean, complete response from NVIDIA from scratch (no duplicate/corrupted text).
+        the clean, complete response from NVIDIA from scratch (0 duplicate text).
       - If all providers fail, yields a helpful inline error token.
     """
     import litellm
@@ -255,255 +263,230 @@ async def general_chat_stream(
     t_start = time.monotonic()
 
     tokens_yielded_total = 0
+    primary_attempted = False
 
     for model_idx, model in enumerate(candidate_models):
         is_gemini = "gemini" in model
         is_nvidia = "nvidia" in model
-        provider_name = "Gemini (Primary)" if is_gemini else ("NVIDIA (Fallback)" if is_nvidia else "Tertiary Provider")
+        provider_name = "gemini" if is_gemini else ("nvidia" if is_nvidia else "tertiary")
 
-        logger.info("%sgeneral_chat_stream: starting %s (%s)", tag, model, provider_name)
+        if is_gemini:
+            logger.info("%sllm_start provider=gemini model=%s", tag, model)
+            primary_attempted = True
+        elif is_nvidia and primary_attempted:
+            logger.info("%sfallback provider=nvidia model=%s", tag, model)
+        else:
+            logger.info("%sllm_start provider=%s model=%s", tag, provider_name, model)
+
         model_tokens = 0
         t_model_start = time.monotonic()
+        response_stream = None
 
         try:
-            # First-token timeout: 8.0s connect/first token window
-            response_stream = await asyncio.wait_for(
-                litellm.acompletion(
-                    model=model,
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=2048,
-                    stream=True,
-                    timeout=45.0,
-                ),
-                timeout=8.0,
+            # 1. Initiate async stream connection
+            response_stream = await litellm.acompletion(
+                model=model,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=2048,
+                stream=True,
+                timeout=30.0,
             )
 
-            # Read stream with first-token deadline
-            first_token_received = False
+            # 2. Hard First-Token Timeout (3.5s) directly on __anext__()
+            first_chunk = await asyncio.wait_for(
+                response_stream.__anext__(),
+                timeout=FIRST_TOKEN_TIMEOUT_S,
+            )
+
+            # Process first chunk
+            first_delta = first_chunk.choices[0].delta if (first_chunk and first_chunk.choices) else None
+            first_content = getattr(first_delta, "content", "") if first_delta else ""
+
+            ttft_ms = round((time.monotonic() - t_model_start) * 1000, 2)
+            logger.info("%sfirst_token provider=%s in %.2fms", tag, provider_name, ttft_ms)
+
+            if first_content:
+                model_tokens += 1
+                tokens_yielded_total += 1
+                yield ("token", first_content)
+
+            # 3. Stream remaining chunks
             async for chunk in response_stream:
                 delta = chunk.choices[0].delta if (chunk and chunk.choices) else None
                 content = getattr(delta, "content", "") if delta else ""
                 if content:
-                    if not first_token_received:
-                        first_token_received = True
-                        ttft = round(time.monotonic() - t_model_start, 3)
-                        logger.info("%sgeneral_chat_stream: first token from %s in %.3fs", tag, model, ttft)
-                    
                     model_tokens += 1
                     tokens_yielded_total += 1
                     yield ("token", content)
 
-            if first_token_received:
-                total_time = round(time.monotonic() - t_start, 3)
-                logger.info("%sgeneral_chat_stream: completed via %s (%d tokens, total %.3fs)", tag, model, model_tokens, total_time)
-                return  # Successful completion!
+            # Completed stream successfully
+            total_time_ms = round((time.monotonic() - t_start) * 1000, 2)
+            logger.info("%sstream_complete provider=%s in %.2fms | total_tokens=%d", tag, provider_name, total_time_ms, model_tokens)
+            return
 
-            # If stream finished without any tokens
-            logger.warning("%sgeneral_chat_stream: %s yielded 0 tokens, trying fallback...", tag, model)
+        except (asyncio.TimeoutError, StopAsyncIteration, Exception) as exc:
+            elapsed_ms = round((time.monotonic() - t_model_start) * 1000, 2)
+            logger.warning("%sprovider %s (%s) failed after %.2fms: %s", tag, provider_name, model, elapsed_ms, exc)
 
-        except (asyncio.TimeoutError, Exception) as exc:
-            elapsed = round(time.monotonic() - t_model_start, 3)
-            logger.warning("%sgeneral_chat_stream: %s failed after %.3fs: %s", tag, model, elapsed, exc)
+            # Cleanly close lingering stream
+            if response_stream is not None:
+                try:
+                    if hasattr(response_stream, "aclose"):
+                        await response_stream.aclose()
+                    elif hasattr(response_stream, "close"):
+                        response_stream.close()
+                except Exception:
+                    pass
 
-            # If partial tokens were yielded before failing mid-stream:
+            # If partial tokens were already yielded before failure mid-stream:
             if model_tokens > 0:
                 logger.warning(
-                    "%sgeneral_chat_stream: Mid-stream failure on %s after %d tokens! Emitting reset event for clean fallback.",
+                    "%smid-stream failure on %s after %d tokens — emitting reset event for clean fallback",
                     tag, model, model_tokens
                 )
                 yield ("reset", "")
                 tokens_yielded_total = 0
 
-            # Continue to next model in candidate list (e.g. NVIDIA)
+            # Continue to fallback model (e.g. NVIDIA)
             continue
 
     # If all models failed
-    logger.error("%sgeneral_chat_stream: All candidate models failed!", tag)
+    logger.error("%sall candidate LLM providers failed!", tag)
     if tokens_yielded_total > 0:
         yield ("reset", "")
     yield ("token", "AI service is temporarily unavailable. Please try again in a moment.")
 
 
 # --------------------------------------------------------------------------- #
-# Heuristic Routing & Classification
+# Fast Local Deterministic Heuristics (<1ms, 0 LLM calls)
 # --------------------------------------------------------------------------- #
 
-_CONVERSATIONAL_GREETINGS = {
+_PURE_CHITCHAT_PATTERNS = {
     "hi", "hello", "hey", "good morning", "good evening", "good afternoon",
     "how are you", "who are you", "what can you do", "help", "thanks",
     "thank you", "bye", "goodbye", "ping", "test", "what is your name",
-    "who made you", "ok", "okay", "cool", "great", "nice"
+    "who made you", "ok", "okay", "cool", "great", "nice", "yo", "sup"
 }
 
-_DOCUMENT_KEYWORD_SIGNALS = {
-    "paper", "papers", "pdf", "exam", "syllabus", "pyq", "semester",
-    "midterm", "cite", "citation", "page", "according to the document",
-    "according to the paper", "according to the notes", "in the document",
-    "in the paper", "in the notes", "in my document", "in my notes",
-    "in my file", "in the file", "uploaded doc", "uploaded file",
-    "uploaded notes", "from the document", "from the paper", "from my notes",
-    "questions from", "topics from", "repeat", "previous paper"
-}
+_EXPLICIT_DOCUMENT_PATTERNS = (
+    "this document", "this pdf", "according to the notes", "in the uploaded file",
+    "from the document", "from the paper", "from my notes", "in my notes",
+    "what does page", "according to the image", "in the question paper",
+    "exam", "syllabus", "pyq", "midterm", "semester", "page ", "chapter",
+    "unit ", "diagram", "table", "formula", "question 1", "question 2",
+    "question 3", "question 4", "question 5", "q1", "q2", "q3", "q4", "q5",
+    "questions from", "topics from", "repeat", "previous paper", "marks",
+    "uploaded doc", "uploaded file", "uploaded notes", "in my file", "in the file"
+)
 
 
-async def is_question_relevant_to_docs(
+def is_question_relevant_to_docs(
     question: str,
     doc_names: List[str],
     chat_history: Optional[List[Dict[str, str]]] = None,
     req_id: str = "",
 ) -> bool:
     """
-    Decide whether the user's question requires document RAG or general conversational AI.
-    Uses ultra-fast O(1) heuristic matching first, falling back to LLM classifier (timeout 2.5s) only when ambiguous.
+    Fast, deterministic local Python heuristic to decide whether to query documents via RAG.
+    Zero LLM calls. Executes in <0.1 milliseconds.
+
+    Logic:
+      1. If user has 0 uploaded documents -> False (pure conversational AI).
+      2. If question is an obvious standalone greeting -> False.
+      3. If question mentions explicit document keywords -> True.
+      4. If question matches any uploaded document filename/tokens -> True.
+      5. If documents exist and there is uncertainty -> PREFER True (RAG retrieval).
     """
     if not doc_names:
         return False
 
-    tag = f"[{req_id}] " if req_id else ""
     q_clean = re.sub(r"[^\w\s]", " ", question).strip().lower()
-    q_clean_single = re.sub(r"\s+", " ", q_clean)
+    q_single = re.sub(r"\s+", " ", q_clean)
 
-    # 1. Fast-path: Greetings and common chat queries
+    # 1. Pure greeting check (e.g. "hi", "hello", "how are you")
     if (
-        q_clean_single in _CONVERSATIONAL_GREETINGS
-        or any(q_clean_single.startswith(g + " ") or q_clean_single == g for g in ("hi", "hello", "hey", "good morning", "good evening", "how are you"))
+        q_single in _PURE_CHITCHAT_PATTERNS
+        or any(q_single.startswith(g + " ") for g in ("hi", "hello", "hey", "good morning", "good evening", "good afternoon"))
     ):
-        logger.debug("%sRouting fast-path: General conversation detected for %r", tag, question[:30])
-        return False
+        # Unless user explicitly references document in greeting
+        if not any(pat in q_single for pat in ("doc", "pdf", "notes", "paper")):
+            return False
 
-    # 2. Fast-path: Document name or individual token mention
+    # 2. Explicit document signals
+    if any(pat in q_single for pat in _EXPLICIT_DOCUMENT_PATTERNS):
+        return True
+
+    # 3. Document name & token matching
     for n in doc_names:
         if n:
             base = n.lower().rsplit(".", 1)[0]
-            if len(base) > 3 and base in q_clean:
-                logger.debug("%sRouting fast-path: Document exact match '%s' in query", tag, base)
+            if len(base) >= 3 and base in q_single:
                 return True
-            tokens = [t for t in re.split(r"[_\-\s]+", base) if len(t) > 2]
-            if any(t in q_clean for t in tokens):
-                logger.debug("%sRouting fast-path: Document token match in query", tag)
-                return True
-            if any(len(t) >= 4 and t[:4] in q_clean for t in tokens):
+            tokens = [t for t in re.split(r"[_\-\s]+", base) if len(t) >= 3]
+            if any(t in q_single for t in tokens):
                 return True
 
-    if any(sig in q_clean for sig in _DOCUMENT_KEYWORD_SIGNALS):
-        logger.debug("%sRouting fast-path: Document signal keyword in query", tag)
-        return True
-
-    # 3. LLM classifier fallback
-    try:
-        import litellm
-    except ImportError:
-        return True
-
-    candidate_models = get_ordered_candidate_models()
-    doc_list = "\n".join(f"- {name}" for name in doc_names[:8])
-
-    recent_context = ""
-    if chat_history:
-        recent_turns = chat_history[-2:]
-        formatted_turns = "\n".join(
-            f"{m.get('role', 'user').capitalize()}: {str(m.get('content', ''))[:100]}"
-            for m in recent_turns
-            if m.get("content")
-        )
-        if formatted_turns:
-            recent_context = f"Recent context:\n{formatted_turns}\n\n"
-
-    classifier_prompt = (
-        "Determine whether the user question is related to the topics of the uploaded documents, or is completely unrelated general chit-chat (e.g. greetings, recipes, trivia, geography, creative writing).\n"
-        f"Uploaded Documents:\n{doc_list}\n\n"
-        f"{recent_context}"
-        f"Question: {question}\n\n"
-        "If the question relates to the subjects or topics in the document titles, reply 'RAG'.\n"
-        "If the question is completely unrelated general conversation/trivia/recipes/creative writing, reply 'GENERAL'.\n"
-        "Reply with ONLY 'RAG' or 'GENERAL':"
-    )
-
-    for model in candidate_models[:2]:
-        try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=[{"role": "user", "content": classifier_prompt}],
-                temperature=0.0,
-                max_tokens=6,
-                timeout=2.5,
-            )
-            verdict = (response.choices[0].message.content or "").strip().upper()
-            logger.info("%sRelevance classifier verdict=%r via %s", tag, verdict, model)
-            return verdict.startswith("RAG")
-        except Exception as exc:
-            logger.debug("%sClassifier failed on %s: %s", tag, model, exc)
-            continue
-
-    # Safe default: RAG when docs exist
+    # 4. Safe default when documents exist: Search user documents
     return True
 
 
-async def contextualize_query(
+def contextualize_query(
     question: str,
     chat_history: Optional[List[Dict[str, str]]] = None,
     req_id: str = "",
 ) -> str:
     """
-    If there is prior conversation history and the question is an ambiguous follow-up,
-    reformulate it into a self-contained search query. Otherwise returns question as-is.
+    Fast, deterministic local Python query contextualization for follow-up questions.
+    Zero LLM calls. Executes in <0.1 milliseconds.
+
+    Logic:
+      - If no chat history or query is standalone -> return question as-is.
+      - If query has follow-up signals ('its', 'this', 'that', 'advantages', etc.) and a previous
+        topic is identifiable -> merge topic with query.
     """
     if not chat_history:
         return question
 
-    tag = f"[{req_id}] " if req_id else ""
     q_lower = question.strip().lower()
     words = q_lower.split()
 
-    # Fast-path: Standalone queries with >= 6 words and no pronouns need no rewrite
     followup_signals = (
         " it", " its", " this", " that", " these", " those", " they", " them",
         "above", "previous", "earlier", "second", "third", "first",
         "more details", "expand", "explain more", "summarize that", "code for that",
-        "translate", "why", "how", "what about", "what else", "tell me more"
+        "why", "how", "what about", "what else", "tell me more",
+        "advantages", "disadvantages", "features", "examples"
     )
-    is_likely_followup = len(words) < 5 or any(sig in f" {q_lower}" for sig in followup_signals)
 
-    if not is_likely_followup:
+    is_followup = len(words) < 5 or any(sig in f" {q_lower}" for sig in followup_signals)
+    if not is_followup:
         return question
 
-    try:
-        import litellm
-    except ImportError:
+    # Find the most recent user turn in history
+    last_user_query = ""
+    for msg in reversed(chat_history):
+        if msg.get("role") == "user" and msg.get("content"):
+            last_user_query = str(msg.get("content", "")).strip()
+            break
+
+    if not last_user_query:
         return question
 
-    candidate_models = get_ordered_candidate_models()
-    recent_turns = chat_history[-4:]
-    history_text = "\n".join(
-        f"{m.get('role', 'user').capitalize()}: {str(m.get('content', ''))[:200]}"
-        for m in recent_turns
-        if m.get("content")
-    )
+    # Extract meaningful key terms from the previous user turn (excluding stopwords)
+    stopwords = {
+        "what", "when", "where", "which", "whose", "why", "how", "is", "are", "was",
+        "were", "the", "a", "an", "in", "on", "of", "to", "for", "with", "explain",
+        "describe", "tell", "me", "about", "can", "you", "please", "give"
+    }
+    prev_words = [w for w in re.findall(r"\w+", last_user_query.lower()) if len(w) >= 3 and w not in stopwords]
 
-    prompt = (
-        "Rewrite the follow-up question into a concise standalone search query for document retrieval. "
-        "Do NOT answer. If already standalone, return unchanged.\n\n"
-        f"History:\n{history_text}\n\n"
-        f"Follow-up: {question}\n\n"
-        "Query:"
-    )
-
-    for model in candidate_models[:2]:
-        try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=60,
-                timeout=2.5,
-            )
-            rewritten = (response.choices[0].message.content or "").strip()
-            if rewritten and len(rewritten) > 3:
-                logger.info("%sContextualized query: %r -> %r via %s", tag, question, rewritten, model)
-                return rewritten
-        except Exception as exc:
-            logger.debug("%sContextualizer failed on %s: %s", tag, model, exc)
-            continue
+    if prev_words:
+        topic_phrase = " ".join(prev_words[:4])
+        # If question already contains the topic words, return as-is
+        if all(w in q_lower for w in prev_words[:2]):
+            return question
+        merged = f"{topic_phrase} {question}"
+        return merged
 
     return question

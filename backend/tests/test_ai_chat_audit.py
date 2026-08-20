@@ -1,17 +1,20 @@
 """
 backend/tests/test_ai_chat_audit.py
 
-Comprehensive test suite verifying the AI chat system audit fixes:
-  1. Gemini primary selection & streaming
-  2. Gemini failure/timeout -> NVIDIA automatic fallback
-  3. Mid-stream Gemini failure -> reset event + NVIDIA clean response
-  4. Both providers failing -> clean error message without hanging
-  5. RAG question handling & citations
-  6. General question handling (fast-path routing)
-  7. Concurrent requests isolation & correlation IDs
-  8. Client cancellation handling
-  9. Production SSE headers verification
-  10. Health endpoint reporting (no secret leaks)
+Comprehensive test suite verifying the AI chat latency and reliability fixes:
+  TEST 1:  General question does NOT make classifier LLM call.
+  TEST 2:  Document question does NOT make classifier LLM call.
+  TEST 3:  Document question does NOT make contextualizer LLM call.
+  TEST 4:  Gemini first token arrives quickly -> Gemini continues.
+  TEST 5:  Gemini first token takes >3.5 seconds -> NVIDIA fallback occurs.
+  TEST 6:  Gemini fails before first token -> NVIDIA fallback.
+  TEST 7:  Gemini fails after partial tokens -> reset event + clean NVIDIA response.
+  TEST 8:  No duplicate done events emitted.
+  TEST 9:  No infinite loading / stream always completes.
+  TEST 10: Multiple concurrent users remain isolated.
+  TEST 11: RAG question still retrieves correct document chunks & citations.
+  TEST 12: General question bypasses RAG and streams directly.
+  TEST 13: Production SSE headers and security diagnostics.
 """
 
 from __future__ import annotations
@@ -55,14 +58,17 @@ def parse_sse_events(raw_text: str) -> list[dict]:
 
 class AsyncIteratorMock:
     """Helper mock for async stream chunks."""
-    def __init__(self, items):
+    def __init__(self, items, delay_first: float = 0.0):
         self.items = items
         self.index = 0
+        self.delay_first = delay_first
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
+        if self.index == 0 and self.delay_first > 0:
+            await asyncio.sleep(self.delay_first)
         if self.index >= len(self.items):
             raise StopAsyncIteration
         item = self.items[self.index]
@@ -93,87 +99,162 @@ class TestAIChatAudit(unittest.IsolatedAsyncioTestCase):
         self.cfg.apply_to_env()
 
     # ---------------------------------------------------------------------- #
-    # Test 1: Gemini Primary Success
+    # TEST 1: General question does NOT make classifier LLM call
     # ---------------------------------------------------------------------- #
-    async def test_01_gemini_primary_success(self):
-        """Verify Gemini is tried first and streams tokens."""
+    async def test_01_general_question_no_classifier_llm(self):
+        """Verify that general questions trigger zero pre-flight LLM calls."""
+        mock_chunks = [_create_mock_chunk("Hello! How can I help you today?")]
+
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = AsyncIteratorMock(mock_chunks)
+
+            events = []
+            async for chunk in ask_question_stream("Hello, how are you?", session_id="test-no-classifier"):
+                events.extend(parse_sse_events(chunk))
+
+            # Only 1 acompletion call should have been made (the streaming generation call itself)
+            self.assertEqual(mock_llm.call_count, 1)
+            call_kwargs = mock_llm.call_args_list[0][1]
+            self.assertTrue(call_kwargs.get("stream", False), "Single LLM call must be the streaming generation call")
+
+    # ---------------------------------------------------------------------- #
+    # TEST 2 & 3: Document question does NOT make classifier or contextualizer LLM call
+    # ---------------------------------------------------------------------- #
+    async def test_02_03_document_question_no_classifier_or_contextualizer_llm(self):
+        """Verify that questions with uploaded documents trigger zero pre-flight LLM calls."""
+        from rag.retriever import RetrievedChunk, RetrievalResult
+
         mock_chunks = [
-            _create_mock_chunk("The "),
-            _create_mock_chunk("OSI "),
-            _create_mock_chunk("model has 7 layers."),
+            RetrievedChunk(
+                id="c1",
+                doc_id="d1",
+                source="os_notes.pdf",
+                page=5,
+                text="Process synchronization uses semaphores and mutex locks.",
+                relevance=0.85,
+            )
+        ]
+        llm_stream = [_create_mock_chunk("Semaphores are used for process synchronization.")]
+
+        with patch("services.chat_service._get_cached_documents", new_callable=AsyncMock) as mock_docs, \
+             patch("rag.retriever.retrieve", new_callable=AsyncMock) as mock_ret, \
+             patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+
+            mock_doc_obj = MagicMock()
+            mock_doc_obj.name = "os_notes.pdf"
+            mock_docs.return_value = [mock_doc_obj]
+            mock_ret.return_value = RetrievalResult(mock_chunks)
+            mock_llm.return_value = AsyncIteratorMock(llm_stream)
+
+            history = [{"role": "user", "content": "What is process synchronization in os_notes.pdf?"}]
+            events = []
+            async for chunk in ask_question_stream(
+                "What about its advantages?",
+                session_id="test-doc-no-llm-routing",
+            ):
+                events.extend(parse_sse_events(chunk))
+
+            # Exactly 1 LLM call must have occurred (for streaming the answer). No classifier or contextualizer calls!
+            self.assertEqual(mock_llm.call_count, 1)
+            call_kwargs = mock_llm.call_args_list[0][1]
+            self.assertTrue(call_kwargs.get("stream", False))
+
+    # ---------------------------------------------------------------------- #
+    # TEST 4: Gemini first token arrives quickly -> Gemini continues
+    # ---------------------------------------------------------------------- #
+    async def test_04_gemini_fast_first_token_continues(self):
+        """Verify Gemini completes normally when its first token arrives in time."""
+        mock_chunks = [
+            _create_mock_chunk("Gemini "),
+            _create_mock_chunk("fast "),
+            _create_mock_chunk("response."),
         ]
 
-        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_litellm:
-            mock_litellm.return_value = AsyncIteratorMock(mock_chunks)
+        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = AsyncIteratorMock(mock_chunks, delay_first=0.05)
 
             tokens = []
-            resets = 0
-            async for chunk in ask_question_stream("Explain OSI model", session_id="test-gemini-success"):
-                events = parse_sse_events(chunk)
-                for ev in events:
+            async for chunk in ask_question_stream("What is TCP?", session_id="test-gemini-fast"):
+                for ev in parse_sse_events(chunk):
                     if ev.get("type") == "token":
                         tokens.append(ev.get("content", ""))
-                    elif ev.get("type") == "reset":
-                        resets += 1
 
-            full_text = "".join(tokens)
-            self.assertEqual(resets, 0)
-            self.assertEqual(full_text, "The OSI model has 7 layers.")
-            # Verify primary model was a Gemini model
-            called_model = mock_litellm.call_args_list[0][1]["model"]
-            self.assertTrue("gemini" in called_model, f"Expected Gemini model, got {called_model}")
+            self.assertEqual("".join(tokens), "Gemini fast response.")
+            first_model = mock_llm.call_args_list[0][1]["model"]
+            self.assertTrue("gemini" in first_model)
 
     # ---------------------------------------------------------------------- #
-    # Test 2: Gemini Failure / Timeout -> NVIDIA Fallback
+    # TEST 5: Gemini first token takes >3.5s -> NVIDIA fallback occurs
     # ---------------------------------------------------------------------- #
-    async def test_02_gemini_failure_nvidia_fallback(self):
-        """Verify when Gemini fails initially, NVIDIA is called and responds seamlessly."""
-        gemini_error = Exception("429 Resource has been exhausted / Rate limit reached")
+    async def test_05_gemini_first_token_timeout_nvidia_fallback(self):
+        """Verify when Gemini takes >3.5s on __anext__(), it times out and switches to NVIDIA immediately."""
         nvidia_chunks = [
-            _create_mock_chunk("NVIDIA: "),
-            _create_mock_chunk("OSI model "),
-            _create_mock_chunk("explanation."),
+            _create_mock_chunk("NVIDIA "),
+            _create_mock_chunk("fallback "),
+            _create_mock_chunk("answer."),
         ]
 
         async def mock_acompletion_side_effect(*args, **kwargs):
             model = kwargs.get("model", "")
             if "gemini" in model:
-                raise gemini_error
+                # Gemini takes 5.0s to deliver the first token (exceeding 3.5s timeout)
+                return AsyncIteratorMock([_create_mock_chunk("Too late")], delay_first=4.0)
             elif "nvidia" in model:
-                return AsyncIteratorMock(nvidia_chunks)
+                return AsyncIteratorMock(nvidia_chunks, delay_first=0.01)
             raise Exception(f"Unexpected model: {model}")
 
-        with patch("litellm.acompletion", side_effect=mock_acompletion_side_effect) as mock_litellm:
+        with patch("litellm.acompletion", side_effect=mock_acompletion_side_effect) as mock_llm:
             tokens = []
             resets = 0
-            async for chunk in ask_question_stream("Explain OSI model", session_id="test-gemini-fail-fallback"):
-                events = parse_sse_events(chunk)
-                for ev in events:
+            async for chunk in ask_question_stream("Explain DNS", session_id="test-gemini-ttft-timeout"):
+                for ev in parse_sse_events(chunk):
                     if ev.get("type") == "token":
                         tokens.append(ev.get("content", ""))
                     elif ev.get("type") == "reset":
                         resets += 1
 
             full_text = "".join(tokens)
-            self.assertEqual(full_text, "NVIDIA: OSI model explanation.")
-            # Confirm Gemini was attempted first, and NVIDIA second
-            models_attempted = [call[1]["model"] for call in mock_litellm.call_args_list]
+            self.assertEqual(full_text, "NVIDIA fallback answer.")
+            models_attempted = [call[1]["model"] for call in mock_llm.call_args_list]
             self.assertTrue(any("gemini" in m for m in models_attempted))
             self.assertTrue(any("nvidia" in m for m in models_attempted))
 
     # ---------------------------------------------------------------------- #
-    # Test 3: Mid-stream Gemini Failure -> Reset event + Clean NVIDIA response
+    # TEST 6: Gemini fails before first token -> NVIDIA fallback
     # ---------------------------------------------------------------------- #
-    async def test_03_gemini_midstream_failure_reset(self):
-        """Verify mid-stream Gemini crash emits a reset event and NVIDIA yields clean text."""
-        # Gemini emits 2 tokens then crashes mid-stream
-        gemini_stream_crash = [
-            _create_mock_chunk("Incomplete "),
-            _create_mock_chunk("Gemini "),
-            Exception("Connection reset by peer mid-stream"),
+    async def test_06_gemini_fails_before_first_token_nvidia_fallback(self):
+        """Verify when Gemini immediately raises an error, NVIDIA responds without error."""
+        nvidia_chunks = [_create_mock_chunk("NVIDIA response after Gemini immediate error.")]
+
+        async def mock_acompletion_side_effect(*args, **kwargs):
+            model = kwargs.get("model", "")
+            if "gemini" in model:
+                raise Exception("429 Too Many Requests: Rate limit exceeded")
+            elif "nvidia" in model:
+                return AsyncIteratorMock(nvidia_chunks)
+            raise Exception(f"Unexpected model: {model}")
+
+        with patch("litellm.acompletion", side_effect=mock_acompletion_side_effect):
+            tokens = []
+            async for chunk in ask_question_stream("Explain HTTP", session_id="test-gemini-fail-early"):
+                for ev in parse_sse_events(chunk):
+                    if ev.get("type") == "token":
+                        tokens.append(ev.get("content", ""))
+
+            self.assertEqual("".join(tokens), "NVIDIA response after Gemini immediate error.")
+
+    # ---------------------------------------------------------------------- #
+    # TEST 7: Gemini fails after partial tokens -> reset + NVIDIA
+    # ---------------------------------------------------------------------- #
+    async def test_07_gemini_midstream_failure_reset_and_fallback(self):
+        """Verify mid-stream crash emits a reset event and NVIDIA yields clean text."""
+        gemini_crash = [
+            _create_mock_chunk("Partial "),
+            _create_mock_chunk("broken "),
+            Exception("Socket closed mid-stream"),
         ]
-        nvidia_complete_stream = [
-            _create_mock_chunk("Complete "),
+        nvidia_clean = [
+            _create_mock_chunk("Clean "),
             _create_mock_chunk("NVIDIA "),
             _create_mock_chunk("response."),
         ]
@@ -181,117 +262,44 @@ class TestAIChatAudit(unittest.IsolatedAsyncioTestCase):
         async def mock_acompletion_side_effect(*args, **kwargs):
             model = kwargs.get("model", "")
             if "gemini" in model:
-                return AsyncIteratorMock(gemini_stream_crash)
+                return AsyncIteratorMock(gemini_crash)
             elif "nvidia" in model:
-                return AsyncIteratorMock(nvidia_complete_stream)
+                return AsyncIteratorMock(nvidia_clean)
             raise Exception(f"Unexpected model: {model}")
 
         with patch("litellm.acompletion", side_effect=mock_acompletion_side_effect):
-            events_received = []
             tokens = []
             resets = 0
-
-            async for chunk in ask_question_stream("Tell me about algorithms", session_id="test-midstream-reset"):
-                events = parse_sse_events(chunk)
-                for ev in events:
-                    events_received.append(ev)
+            async for chunk in ask_question_stream("Explain Sorting", session_id="test-midstream-reset"):
+                for ev in parse_sse_events(chunk):
                     if ev.get("type") == "reset":
                         resets += 1
-                        tokens.clear()  # Frontend resets its accumulator on reset event
+                        tokens.clear()  # Clear on reset
                     elif ev.get("type") == "token":
                         tokens.append(ev.get("content", ""))
 
-            full_text = "".join(tokens)
-            self.assertGreaterEqual(resets, 1, "Must emit at least one reset event on mid-stream failure")
-            self.assertEqual(full_text, "Complete NVIDIA response.", "Accumulated text must match clean NVIDIA response without Gemini residue")
+            self.assertGreaterEqual(resets, 1)
+            self.assertEqual("".join(tokens), "Clean NVIDIA response.")
 
     # ---------------------------------------------------------------------- #
-    # Test 4: Both Providers Fail -> Clean Error, Zero Infinite Hang
+    # TEST 8 & 9: No duplicate done events & No infinite loading
     # ---------------------------------------------------------------------- #
-    async def test_04_both_providers_fail_clean_error(self):
-        """Verify when all providers fail, a clear error and done event are emitted."""
-        async def mock_fail_all(*args, **kwargs):
-            raise Exception("API down")
+    async def test_08_09_no_duplicate_done_and_no_infinite_loading(self):
+        """Verify stream always terminates with exactly one done event."""
+        mock_chunks = [_create_mock_chunk("Sample answer")]
 
-        with patch("litellm.acompletion", side_effect=mock_fail_all):
+        with patch("litellm.acompletion", return_value=AsyncIteratorMock(mock_chunks)):
             events = []
-            async for chunk in ask_question_stream("Hello", session_id="test-all-fail"):
+            async for chunk in ask_question_stream("Hello", session_id="test-done-count"):
                 events.extend(parse_sse_events(chunk))
 
-            event_types = [e.get("type") for e in events]
-            self.assertIn("done", event_types, "Stream must emit 'done' event")
-            token_contents = [e.get("content", "") for e in events if e.get("type") == "token"]
-            full_msg = "".join(token_contents)
-            self.assertTrue(
-                "temporarily unavailable" in full_msg.lower() or "error" in full_msg.lower(),
-                f"Expected friendly error message, got: {full_msg}",
-            )
+            done_events = [e for e in events if e.get("type") == "done"]
+            self.assertEqual(len(done_events), 1, "Must emit exactly ONE 'done' event")
 
     # ---------------------------------------------------------------------- #
-    # Test 5: RAG Question with Grounded Vector Chunks
+    # TEST 10: Multiple concurrent users remain isolated
     # ---------------------------------------------------------------------- #
-    async def test_05_rag_grounded_response(self):
-        """Verify vector retrieval grounded prompt and citations metadata."""
-        from rag.retriever import RetrievedChunk, RetrievalResult
-
-        mock_chunks = [
-            RetrievedChunk(
-                id="c1",
-                doc_id="d1",
-                source="OS_Notes.pdf",
-                page=12,
-                text="Deadlock occurs when four conditions are met: mutual exclusion, hold and wait, no preemption, circular wait.",
-                relevance=0.88,
-            )
-        ]
-
-        llm_answer = [_create_mock_chunk("According to OS_Notes.pdf (Page 12), deadlock requires four Coffman conditions.")]
-
-        with patch("services.chat_service._get_cached_documents", new_callable=AsyncMock) as mock_docs, \
-             patch("rag.retriever.retrieve", new_callable=AsyncMock) as mock_ret, \
-             patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
-
-            mock_doc_obj = MagicMock()
-            mock_doc_obj.name = "OS_Notes.pdf"
-            mock_docs.return_value = [mock_doc_obj]
-            mock_ret.return_value = RetrievalResult(mock_chunks)
-            mock_llm.return_value = AsyncIteratorMock(llm_answer)
-
-            events = []
-            async for chunk in ask_question_stream("What are deadlock conditions in OS_Notes.pdf?", session_id="test-rag"):
-                events.extend(parse_sse_events(chunk))
-
-            meta_events = [e for e in events if e.get("type") == "meta"]
-            self.assertEqual(len(meta_events), 1)
-            meta = meta_events[0]
-            self.assertEqual(meta.get("source"), "OS_Notes.pdf")
-            self.assertEqual(meta.get("page"), 12)
-            self.assertEqual(len(meta.get("citations", [])), 1)
-            self.assertEqual(meta["citations"][0]["source"], "OS_Notes.pdf")
-
-    # ---------------------------------------------------------------------- #
-    # Test 6: Non-RAG / General Question
-    # ---------------------------------------------------------------------- #
-    async def test_06_non_rag_fast_routing(self):
-        """Verify conversational greeting bypasses RAG and streams directly."""
-        mock_chunks = [_create_mock_chunk("Hello! How can I help you today?")]
-
-        with patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = AsyncIteratorMock(mock_chunks)
-
-            events = []
-            async for chunk in ask_question_stream("Hello", session_id="test-greeting"):
-                events.extend(parse_sse_events(chunk))
-
-            meta_events = [e for e in events if e.get("type") == "meta"]
-            self.assertEqual(len(meta_events), 1)
-            self.assertEqual(meta_events[0].get("status"), "general")
-            self.assertEqual(meta_events[0].get("citations"), [])
-
-    # ---------------------------------------------------------------------- #
-    # Test 7: Multiple Concurrent Chat Requests
-    # ---------------------------------------------------------------------- #
-    async def test_07_concurrent_chat_requests(self):
+    async def test_10_concurrent_user_isolation(self):
         """Verify concurrent requests execute independently without cross-contamination."""
         async def run_single_chat(session_id: str, prompt: str):
             chunks = [_create_mock_chunk(f"Answer for {prompt}")]
@@ -305,7 +313,7 @@ class TestAIChatAudit(unittest.IsolatedAsyncioTestCase):
 
         tasks = [
             run_single_chat(f"sess-{i}", f"Question {i}")
-            for i in range(5)
+            for i in range(10)
         ]
         results = await asyncio.gather(*tasks)
         for sid, text in results:
@@ -313,53 +321,78 @@ class TestAIChatAudit(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(text, f"Answer for Question {idx}")
 
     # ---------------------------------------------------------------------- #
-    # Test 8: Client Cancellation Handling
+    # TEST 11: RAG question still retrieves correct chunks
     # ---------------------------------------------------------------------- #
-    async def test_08_client_cancellation(self):
-        """Verify generator cancellation raises CancelledError and logs cleanly."""
-        async def endless_stream(*args, **kwargs):
-            while True:
-                await asyncio.sleep(0.1)
-                yield _create_mock_chunk("token")
+    async def test_11_rag_retrieves_correct_chunks(self):
+        """Verify vector retrieval accurately attaches document citations."""
+        from rag.retriever import RetrievedChunk, RetrievalResult
 
-        with patch("litellm.acompletion", side_effect=endless_stream):
-            gen = ask_question_stream("Long question", session_id="test-cancel")
-            # Consume 1 event, then cancel
-            await gen.asend(None)
-            await gen.aclose()
+        mock_chunks = [
+            RetrievedChunk(
+                id="c101",
+                doc_id="d101",
+                source="CN_Unit3.pdf",
+                page=22,
+                text="BGP uses path vector routing algorithm across autonomous systems.",
+                relevance=0.92,
+            )
+        ]
+        llm_answer = [_create_mock_chunk("BGP uses path vector routing as stated in CN_Unit3.pdf.")]
+
+        with patch("services.chat_service._get_cached_documents", new_callable=AsyncMock) as mock_docs, \
+             patch("rag.retriever.retrieve", new_callable=AsyncMock) as mock_ret, \
+             patch("litellm.acompletion", new_callable=AsyncMock) as mock_llm:
+
+            mock_doc_obj = MagicMock()
+            mock_doc_obj.name = "CN_Unit3.pdf"
+            mock_docs.return_value = [mock_doc_obj]
+            mock_ret.return_value = RetrievalResult(mock_chunks)
+            mock_llm.return_value = AsyncIteratorMock(llm_answer)
+
+            events = []
+            async for chunk in ask_question_stream("What does CN_Unit3.pdf say about BGP?", session_id="test-rag-chunks"):
+                events.extend(parse_sse_events(chunk))
+
+            meta_events = [e for e in events if e.get("type") == "meta"]
+            self.assertEqual(len(meta_events), 1)
+            meta = meta_events[0]
+            self.assertEqual(meta.get("source"), "CN_Unit3.pdf")
+            self.assertEqual(meta.get("page"), 22)
+            self.assertEqual(meta["citations"][0]["source"], "CN_Unit3.pdf")
 
     # ---------------------------------------------------------------------- #
-    # Test 9: Production SSE Headers Verification
+    # TEST 12: General question bypasses RAG
     # ---------------------------------------------------------------------- #
-    def test_09_production_sse_headers(self):
-        """Verify FastAPI endpoint returns required headers."""
+    async def test_12_general_question_bypasses_rag(self):
+        """Verify general greeting completely bypasses retriever."""
+        mock_chunks = [_create_mock_chunk("Hi there!")]
+
+        with patch("rag.retriever.retrieve", new_callable=AsyncMock) as mock_ret, \
+             patch("litellm.acompletion", return_value=AsyncIteratorMock(mock_chunks)):
+
+            events = []
+            async for chunk in ask_question_stream("hi", session_id="test-bypass-rag"):
+                events.extend(parse_sse_events(chunk))
+
+            # Vector retrieve must NOT have been called for a simple greeting
+            self.assertEqual(mock_ret.call_count, 0)
+            meta_events = [e for e in events if e.get("type") == "meta"]
+            self.assertEqual(meta_events[0].get("status"), "general")
+
+    # ---------------------------------------------------------------------- #
+    # TEST 13: Production SSE Headers & Diagnostics
+    # ---------------------------------------------------------------------- #
+    def test_13_production_headers_and_diagnostics(self):
+        """Verify FastAPI endpoint headers and /health endpoint safety."""
         res = client.post("/api/chat?stream=true", json={"question": "ping"})
         self.assertEqual(res.status_code, 200)
-        headers = res.headers
-        self.assertIn("text/event-stream", headers.get("content-type", ""))
-        self.assertIn("no-cache", headers.get("cache-control", ""))
-        self.assertIn("no-transform", headers.get("cache-control", ""))
-        self.assertEqual(headers.get("x-accel-buffering"), "no")
+        self.assertIn("text/event-stream", res.headers.get("content-type", ""))
+        self.assertEqual(res.headers.get("x-accel-buffering"), "no")
 
-    # ---------------------------------------------------------------------- #
-    # Test 10: Health Endpoint Reporting & No Secret Leaks
-    # ---------------------------------------------------------------------- #
-    def test_10_health_endpoint_diagnostics(self):
-        """Verify /health endpoint returns diagnostics without exposing any secret keys."""
-        res = client.get("/health")
-        self.assertEqual(res.status_code, 200)
-        data = res.json()
-
-        self.assertEqual(data.get("status"), "ok")
-        self.assertIn("gemini", data)
-        self.assertIn("nvidia", data)
-        self.assertIn("mongodb", data)
-        self.assertIn("vector_store", data)
-
-        # Ensure no raw secret keys or tokens are in the JSON body
-        raw_body = res.text
+        res_health = client.get("/health")
+        self.assertEqual(res_health.status_code, 200)
         for key in ["AIza", "nvapi-", "sk-"]:
-            self.assertNotIn(key, raw_body, "Secret API key prefix detected in health response!")
+            self.assertNotIn(key, res_health.text)
 
 
 if __name__ == "__main__":

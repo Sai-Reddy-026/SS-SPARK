@@ -59,16 +59,17 @@ async def new_session(
     }
 
 
+from core.security import get_current_user, get_optional_user
+
 @router.patch("/{session_id}")
 async def modify_session(
     session_id: str,
     req: UpdateSessionRequest,
-    current_user: Optional[UserRecord] = Depends(get_optional_user),
+    current_user: UserRecord = Depends(get_current_user),
 ):
     """Update title, pinned, or archived status of a session."""
-    user_id = current_user.id if current_user else None
     updates = req.model_dump(exclude_unset=True)
-    updated = await update_session(session_id, updates, user_id=user_id)
+    updated = await update_session(session_id, updates, user_id=current_user.id)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 
@@ -81,11 +82,13 @@ async def modify_session(
 @router.delete("/{session_id}")
 async def remove_session(
     session_id: str,
-    current_user: Optional[UserRecord] = Depends(get_optional_user),
+    current_user: UserRecord = Depends(get_current_user),
 ):
-    """Delete a chat session and all messages within it."""
-    user_id = current_user.id if current_user else None
-    deleted = await delete_session(session_id, user_id=user_id)
+    """
+    Delete a chat session and all messages within it.
+    SEC-02 FIX: Requires authenticated user and verifies strict user_id ownership.
+    """
+    deleted = await delete_session(session_id, user_id=current_user.id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
 

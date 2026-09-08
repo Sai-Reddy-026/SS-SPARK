@@ -314,5 +314,5 @@ def test_sec03_cors_origin_policy():
 def test_mod01_gemini_candidate_models():
     """Verify GEMINI_MODELS candidate list in general_llm."""
     from rag.general_llm import GEMINI_MODELS
-    assert "gemini/gemini-2.0-flash" in GEMINI_MODELS
-    assert "gemini/gemini-2.0-flash-lite" in GEMINI_MODELS
+    assert "gemini/gemini-3.5-flash-lite" in GEMINI_MODELS
+    assert "gemini/gemini-3.5-flash" in GEMINI_MODELS

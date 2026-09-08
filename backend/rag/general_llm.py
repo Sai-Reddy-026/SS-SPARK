@@ -32,9 +32,10 @@ FIRST_TOKEN_TIMEOUT_S = 3.5
 
 # Model definitions per provider
 GEMINI_MODELS = [
-    "gemini/gemini-2.0-flash",
-    "gemini/gemini-2.0-flash-lite",
-    "gemini/gemini-1.5-flash",
+    "gemini/gemini-3.5-flash-lite",
+    "gemini/gemini-3.5-flash",
+    "gemini/gemini-3.7-flash",
+    "gemini/gemini-3.6-flash",
 ]
 
 NVIDIA_MODELS = [

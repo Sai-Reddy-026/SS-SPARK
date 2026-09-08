@@ -14,7 +14,7 @@ class SystemSettings(BaseModel):
     id: str = "global_settings"
     ocr_engine: str = "tesseract"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "gemini-3.5-flash-lite"
     chunk_size: int = 500
     chunk_overlap: int = 50
     max_upload_size_mb: int = 50

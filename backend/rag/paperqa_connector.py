@@ -81,7 +81,7 @@ def _build_settings():
 
     # Pick the best available LLM (Gemini Primary -> NVIDIA Fallback -> OpenAI -> Anthropic)
     if gemini_key:
-        llm_name = "gemini/gemini-2.0-flash"
+        llm_name = "gemini/gemini-3.5-flash-lite"
         os.environ["GEMINI_API_KEY"] = gemini_key
         os.environ["GOOGLE_API_KEY"] = gemini_key  # litellm also reads GOOGLE_API_KEY
         logger.info("PaperQA connector: using Gemini (model=%s)", llm_name)

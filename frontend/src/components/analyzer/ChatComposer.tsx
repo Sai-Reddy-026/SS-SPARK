@@ -17,10 +17,10 @@ export function ChatComposer({ value, onChange, onSend, onStop, onFiles, loading
   const imageInput = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="border-t border-border/30 bg-background/70 px-3 pb-4 pt-3 backdrop-blur-xl sm:px-5">
+    <div className="border-t border-border/20 bg-background/60 px-3 pb-4 pt-3 backdrop-blur-xl sm:px-5">
       <div className="mx-auto max-w-3xl">
-        {/* Composer pill — Ultra-Premium Obsidian Glass Design */}
-        <div className="relative rounded-2xl border border-white/10 bg-[#181822]/90 dark:bg-[#16161f]/90 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.36)] transition-all duration-200 hover:border-white/15 focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20">
+        {/* Composer pill — Design-System Glass */}
+        <div className="composer-pill premium-focus relative rounded-2xl border backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.2)] transition-all duration-200">
           {/* Hidden file inputs */}
           <input
             ref={docInput}
@@ -58,15 +58,15 @@ export function ChatComposer({ value, onChange, onSend, onStop, onFiles, loading
             }}
             rows={1}
             placeholder="Ask anything about your uploaded question papers..."
-            className="max-h-48 min-h-[54px] resize-none border-0 bg-transparent px-4 py-3.5 text-[0.95rem] text-foreground shadow-none focus-visible:ring-0 placeholder:text-muted-foreground/60"
+            className="max-h-48 min-h-[54px] resize-none border-0 bg-transparent px-4 py-3.5 text-[0.95rem] text-foreground shadow-none focus-visible:ring-0 placeholder:text-muted-foreground/50"
           />
 
           {/* Bottom toolbar */}
-          <div className="flex items-center gap-1.5 px-3 pb-2.5">
+          <div className="flex items-center gap-1 px-3 pb-2.5">
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 gap-1.5 rounded-xl px-2.5 text-xs text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+              className="h-8 gap-1.5 rounded-xl px-2.5 text-xs text-muted-foreground transition-all hover:bg-accent hover:text-foreground"
               onClick={() => docInput.current?.click()}
               title="Attach document (PDF, DOCX, TXT)"
             >
@@ -76,7 +76,7 @@ export function ChatComposer({ value, onChange, onSend, onStop, onFiles, loading
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 gap-1.5 rounded-xl px-2.5 text-xs text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+              className="h-8 gap-1.5 rounded-xl px-2.5 text-xs text-muted-foreground transition-all hover:bg-accent hover:text-foreground"
               onClick={() => imageInput.current?.click()}
               title="Upload paper image"
             >
@@ -84,14 +84,19 @@ export function ChatComposer({ value, onChange, onSend, onStop, onFiles, loading
               <span className="hidden sm:inline">Image</span>
             </Button>
 
+            {/* Keyboard hint */}
+            <span className="ml-auto mr-2 hidden text-[11px] text-muted-foreground/40 sm:inline">
+              ⏎ to send
+            </span>
+
             {/* Send / Stop button */}
-            <div className="ml-auto">
+            <div>
               {loading ? (
                 <Button
                   size="icon"
                   aria-label="Stop generating"
                   onClick={onStop}
-                  className="h-9 w-9 shrink-0 rounded-xl bg-foreground text-background shadow-sm hover:bg-foreground/90"
+                  className="h-9 w-9 shrink-0 rounded-xl bg-foreground text-background shadow-sm transition-transform hover:bg-foreground/90 active:scale-90"
                 >
                   <Square className="h-3.5 w-3.5 fill-current" />
                 </Button>
@@ -101,7 +106,7 @@ export function ChatComposer({ value, onChange, onSend, onStop, onFiles, loading
                   aria-label="Send message"
                   disabled={!value.trim()}
                   onClick={onSend}
-                  className="h-9 w-9 shrink-0 rounded-xl gradient-brand text-brand-foreground shadow-[0_2px_12px_rgba(139,92,246,0.35)] transition-all hover:scale-105 hover:shadow-[0_4px_20px_rgba(139,92,246,0.5)] active:scale-95 disabled:opacity-35 disabled:hover:scale-100 disabled:hover:shadow-none"
+                  className="h-9 w-9 shrink-0 rounded-xl gradient-brand text-brand-foreground shadow-[0_2px_12px_color-mix(in_oklab,var(--brand)_35%,transparent)] transition-all duration-200 hover:scale-105 hover:shadow-[0_4px_20px_color-mix(in_oklab,var(--brand)_50%,transparent)] active:scale-95 disabled:opacity-30 disabled:hover:scale-100 disabled:hover:shadow-none"
                 >
                   <ArrowUp className="h-4 w-4" />
                 </Button>
@@ -111,10 +116,11 @@ export function ChatComposer({ value, onChange, onSend, onStop, onFiles, loading
         </div>
 
         {/* Footer disclaimer */}
-        <p className="mt-2 text-center text-[11px] text-muted-foreground/60">
+        <p className="mt-2.5 text-center text-[11px] text-muted-foreground/40">
           SS Spark · Answers grounded only in your uploaded documents. Verify before exams.
         </p>
       </div>
     </div>
   );
 }
+

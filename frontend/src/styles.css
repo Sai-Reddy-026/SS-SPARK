@@ -56,7 +56,9 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
-/* Dark Obsidian & Electric Orange is the default experience */
+/* ═══════════════════════════════════════════════════════════════
+   Dark Obsidian & Electric Orange — default experience
+   ═══════════════════════════════════════════════════════════════ */
 :root {
   --radius: 0.9rem;
   --background: oklch(0.11 0.005 45);
@@ -105,10 +107,24 @@
     color-mix(in oklab, var(--brand) 18%, transparent) 0%,
     transparent 60%
   );
+  --gradient-mesh: radial-gradient(
+      ellipse 80% 60% at 30% 40%,
+      color-mix(in oklab, var(--brand) 12%, transparent) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 60% 80% at 75% 25%,
+      color-mix(in oklab, var(--brand-glow) 8%, transparent) 0%,
+      transparent 60%
+    );
   --shadow-glass: 0 24px 60px -24px rgba(0, 0, 0, 0.8);
   --shadow-glow: 0 0 40px -10px color-mix(in oklab, var(--brand) 55%, transparent);
+  --shadow-glow-sm: 0 0 20px -6px color-mix(in oklab, var(--brand) 40%, transparent);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Light mode overrides
+   ═══════════════════════════════════════════════════════════════ */
 .light {
   --background: oklch(0.985 0.005 45);
   --foreground: oklch(0.18 0.02 45);
@@ -121,11 +137,11 @@
   --secondary: oklch(0.95 0.012 45);
   --secondary-foreground: oklch(0.22 0.02 45);
   --muted: oklch(0.955 0.01 45);
-  --muted-foreground: oklch(0.48 0.02 45);
+  --muted-foreground: oklch(0.44 0.02 45);
   --accent: oklch(0.94 0.025 45);
   --accent-foreground: oklch(0.22 0.03 45);
-  --border: oklch(0.9 0.01 45);
-  --input: oklch(0.9 0.01 45);
+  --border: oklch(0.88 0.01 45);
+  --input: oklch(0.88 0.01 45);
   --ring: oklch(0.64 0.22 45);
   --surface: oklch(1 0 0 / 70%);
   --surface-elevated: oklch(1 0 0 / 88%);
@@ -134,9 +150,24 @@
   --sidebar-accent: oklch(0.93 0.02 45);
   --sidebar-accent-foreground: oklch(0.2 0.02 45);
   --sidebar-border: oklch(0.9 0.01 45);
-  --shadow-glass: 0 20px 50px -24px rgba(0, 0, 0, 0.15);
+  --shadow-glass: 0 20px 50px -24px rgba(0, 0, 0, 0.12);
+  --shadow-glow: 0 0 30px -10px color-mix(in oklab, var(--brand) 30%, transparent);
+  --shadow-glow-sm: 0 0 16px -6px color-mix(in oklab, var(--brand) 20%, transparent);
+  --gradient-mesh: radial-gradient(
+      ellipse 80% 60% at 30% 40%,
+      color-mix(in oklab, var(--brand) 6%, transparent) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 60% 80% at 75% 25%,
+      color-mix(in oklab, var(--brand-glow) 4%, transparent) 0%,
+      transparent 60%
+    );
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Base layer
+   ═══════════════════════════════════════════════════════════════ */
 @layer base {
   * {
     border-color: var(--color-border);
@@ -147,6 +178,7 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   h1,
@@ -156,18 +188,41 @@
     font-family: var(--font-display);
     letter-spacing: -0.02em;
   }
+
+  /* Premium scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--foreground) 15%, transparent);
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--foreground) 25%, transparent);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 15%, transparent) transparent;
+  }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Glass & surface utilities
+   ═══════════════════════════════════════════════════════════════ */
 @utility glass {
   background-color: var(--surface);
-  backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-glass);
 }
 
 @utility glass-elevated {
   background-color: var(--surface-elevated);
-  backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(170%);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-glass);
 }
@@ -180,6 +235,10 @@
   background-image: var(--gradient-brand);
   background-clip: text;
   color: transparent;
+}
+
+@utility gradient-mesh-bg {
+  background-image: var(--gradient-mesh);
 }
 
 @utility ambient-glow {
@@ -195,14 +254,24 @@
 
 @utility hover-lift {
   transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
+    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   &:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-glow);
   }
 }
 
+@utility hover-glow {
+  transition: box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  &:hover {
+    box-shadow: var(--shadow-glow-sm);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Keyframe animations
+   ═══════════════════════════════════════════════════════════════ */
 @keyframes message-in {
   from {
     opacity: 0;
@@ -232,6 +301,69 @@
   50%       { opacity: 0; }
 }
 
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes gradient-shift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Animation utilities
+   ═══════════════════════════════════════════════════════════════ */
 @utility animate-message-in {
   animation: message-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -248,10 +380,61 @@
   animation: cursor-blink 0.8s step-end infinite;
 }
 
+@utility animate-fade-up {
+  animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
 
-/* Light-mode override for the dark composer pill */
+@utility animate-scale-in {
+  animation: scale-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@utility animate-shimmer {
+  background-size: 200% auto;
+  animation: shimmer 3s linear infinite;
+}
+
+@utility animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+@utility animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+@utility animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 6s ease infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Special text effects
+   ═══════════════════════════════════════════════════════════════ */
+@utility text-shine {
+  background: linear-gradient(
+    110deg,
+    var(--brand) 0%,
+    var(--brand-glow) 35%,
+    oklch(0.95 0.05 60) 50%,
+    var(--brand-glow) 65%,
+    var(--brand) 100%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 4s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme-adaptive composer & bubble colours
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Composer pill */
+:root .composer-pill {
+  background-color: oklch(0.14 0.008 45 / 92%);
+  border-color: oklch(0.26 0.015 45 / 50%);
+}
 .light .composer-pill {
-  background-color: oklch(0.96 0.008 45);
+  background-color: oklch(0.97 0.005 45 / 95%);
   border-color: oklch(0.88 0.012 45);
 }
 
@@ -260,5 +443,31 @@
   background-color: oklch(0.18 0.015 45);
 }
 .light .user-bubble {
-  background-color: oklch(0.92 0.01 45);
+  background-color: oklch(0.93 0.008 45);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Staggered animation children (use on parent container)
+   ═══════════════════════════════════════════════════════════════ */
+.stagger-children > * {
+  animation: fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Focus ring utility for inputs
+   ═══════════════════════════════════════════════════════════════ */
+.premium-focus {
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.premium-focus:focus,
+.premium-focus:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 15%, transparent),
+              var(--shadow-glow-sm);
 }

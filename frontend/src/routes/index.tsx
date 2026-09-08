@@ -25,7 +25,7 @@ import {
   type SessionResponse,
   type StreamMeta,
 } from "@/lib/api";
-import { BrainCircuit, FileText, Sparkles } from "lucide-react";
+import { BookOpen, BrainCircuit, Code2, FileText, Sparkles, Zap } from "lucide-react";
 
 // Code-split heavy chart and modal dependencies
 const AnalyzerPanel = lazy(() => import("@/components/analyzer/AnalyzerPanel"));
@@ -66,10 +66,10 @@ export const Route = createFileRoute("/")(
 
 // Suggested prompts shown on the empty state (ChatGPT style)
 const SUGGESTED_PROMPTS = [
-  "Which topics repeat most across all papers?",
-  "Explain binary search with an example.",
-  "What are the most important questions for the exam?",
-  "Write a C++ program to implement BFS.",
+  { text: "Which topics repeat most across all papers?", icon: Zap },
+  { text: "Explain binary search with an example.", icon: Code2 },
+  { text: "What are the most important questions for the exam?", icon: Sparkles },
+  { text: "Write a C++ program to implement BFS.", icon: BookOpen },
 ];
 
 // Session persistence key in sessionStorage
@@ -624,7 +624,7 @@ function AnalyzerPage() {
       />
 
       {/* ── Main content column ── */}
-      <div className="ambient-glow flex min-w-0 flex-1 flex-col">
+      <div className="ambient-glow gradient-mesh-bg flex min-w-0 flex-1 flex-col">
         {/* Top navbar */}
         <Navbar
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -638,50 +638,58 @@ function AnalyzerPage() {
 
         {/* ── Scrollable chat area ── */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
-          {/* ── Empty / Welcome state — ChatGPT style ── */}
+          {/* ── Empty / Welcome state — Premium AI ── */}
           {!hasMessages && !loading && (
-            <div className="flex h-full flex-col items-center justify-center px-4 py-12 text-center">
-              {/* Brand logo */}
-              <div className="relative mb-6">
-                <span className="absolute inset-0 -z-10 rounded-full blur-3xl gradient-brand opacity-20" />
-                <span className="grid h-20 w-20 place-items-center rounded-3xl gradient-brand shadow-xl">
-                  <BrainCircuit className="h-10 w-10 text-white" />
+            <div className="flex h-full flex-col items-center justify-center px-4 py-16 text-center">
+              {/* Animated brand orb */}
+              <div className="animate-scale-in relative mb-8">
+                <span className="absolute -inset-6 -z-10 rounded-full blur-[60px] gradient-brand opacity-25 animate-pulse-glow" />
+                <span className="grid h-[72px] w-[72px] place-items-center rounded-[22px] gradient-brand shadow-xl shadow-primary/25 animate-float">
+                  <BrainCircuit className="h-9 w-9 text-white drop-shadow-sm" />
                 </span>
               </div>
-              <h1 className="text-3xl font-bold sm:text-4xl">
-                <span className="gradient-text">What can I help with?</span>
+
+              {/* Headline with shimmer */}
+              <h1 className="animate-fade-up text-3xl font-extrabold tracking-tight sm:text-5xl" style={{ animationDelay: '80ms' }}>
+                <span className="text-shine">What can I help with?</span>
               </h1>
-              <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
+              <p className="animate-fade-up mx-auto mt-4 max-w-lg text-[0.95rem] leading-relaxed text-muted-foreground" style={{ animationDelay: '160ms' }}>
                 Ask me anything — general knowledge, coding problems, or questions about your
                 uploaded documents. Answers grounded in your files include citations and page
                 numbers.
               </p>
 
-              {/* Suggested prompts */}
-              <div className="mt-8 grid w-full max-w-xl gap-2 sm:grid-cols-2">
-                {SUGGESTED_PROMPTS.map((prompt) => (
+              {/* Suggested prompts with stagger animation */}
+              <div className="stagger-children mt-10 grid w-full max-w-xl gap-2.5 sm:grid-cols-2">
+                {SUGGESTED_PROMPTS.map(({ text, icon: PromptIcon }) => (
                   <button
-                    key={prompt}
+                    key={text}
                     onClick={() => {
-                      setInput(prompt);
-                      setTimeout(() => sendMessage(prompt), 50);
+                      setInput(text);
+                      setTimeout(() => sendMessage(text), 50);
                     }}
-                    className="group rounded-2xl border border-border/60 bg-card/60 px-4 py-3 text-left text-sm text-muted-foreground transition-all hover:border-primary/50 hover:bg-accent hover:text-foreground"
+                    className="group flex items-start gap-3 rounded-2xl border border-border/50 bg-card/50 px-4 py-3.5 text-left text-sm text-muted-foreground backdrop-blur-sm transition-all duration-200 hover:border-primary/40 hover:bg-accent/80 hover:text-foreground hover-glow"
                   >
-                    <Sparkles className="mb-1 h-4 w-4 text-chart-2 transition-colors group-hover:text-primary" />
-                    {prompt}
+                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/20">
+                      <PromptIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="leading-snug">{text}</span>
                   </button>
                 ))}
               </div>
 
-              {/* Document count badge */}
+              {/* Document count indicator */}
               {docs.length > 0 && (
                 <button
                   onClick={() => setSearchPadOpen(true)}
-                  className="mt-6 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+                  className="animate-fade-up mt-8 flex items-center gap-2 rounded-full border border-border/40 bg-card/40 px-4 py-2 text-xs text-muted-foreground backdrop-blur-sm transition-all hover:border-primary/40 hover:text-foreground hover-glow cursor-pointer"
+                  style={{ animationDelay: '400ms' }}
                 >
-                  <FileText className="h-3.5 w-3.5 text-chart-1" />
-                  {docs.length} document{docs.length !== 1 ? "s" : ""} loaded · Click to open Search Pad
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-chart-1 opacity-50" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-chart-1" />
+                  </span>
+                  {docs.length} document{docs.length !== 1 ? "s" : ""} loaded · Open Search Pad
                 </button>
               )}
             </div>

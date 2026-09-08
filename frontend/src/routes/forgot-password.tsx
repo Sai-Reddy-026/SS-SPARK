@@ -87,18 +87,25 @@ function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4 sm:px-6 py-12">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4 sm:px-6 py-12 relative overflow-hidden">
+      {/* Background ambient orbs */}
+      <div className="absolute top-1/4 left-1/3 w-96 h-96 rounded-full bg-primary/10 blur-[130px] pointer-events-none animate-pulse-glow" />
+      <div className="absolute bottom-1/4 right-1/3 w-80 h-80 rounded-full bg-chart-1/10 blur-[120px] pointer-events-none animate-pulse-glow" style={{ animationDelay: "2s" }} />
+
+      <div className="w-full max-w-md relative z-10">
         {/* Brand Icon */}
         <div className="flex justify-center mb-8">
-          <div className="p-3.5 rounded-2xl gradient-brand shadow-lg">
-            <Sparkles className="h-8 w-8 text-brand-foreground" />
+          <div className="relative">
+            <span className="absolute -inset-2 rounded-3xl bg-primary/30 blur-xl animate-pulse-glow" />
+            <div className="relative p-3.5 rounded-2xl gradient-brand shadow-xl shadow-primary/25 animate-float">
+              <Sparkles className="h-8 w-8 text-brand-foreground" />
+            </div>
           </div>
         </div>
 
         {sent ? (
           /* ── Confirmation / Resend View ── */
-          <div className="rounded-2xl border border-border/60 bg-card/60 p-6 sm:p-8 shadow-xl backdrop-blur-sm text-center animate-message-in">
+          <div className="rounded-3xl border border-border/70 bg-card/70 p-6 sm:p-8 shadow-2xl backdrop-blur-xl text-center animate-message-in">
             <div className="flex justify-center mb-5">
               <div
                 className="p-4 rounded-full"
@@ -111,18 +118,18 @@ function ForgotPasswordPage() {
               </div>
             </div>
 
-            <h2 className="text-2xl font-bold mb-2">Check your email</h2>
+            <h2 className="text-2xl font-bold mb-2 tracking-tight">Check your email</h2>
             <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
-              If an account exists for <strong className="text-foreground font-medium">{email}</strong>, we have sent a password reset link to your inbox.
+              If an account exists for <strong className="text-foreground font-semibold">{email}</strong>, we have sent a password reset link to your inbox.
             </p>
 
-            <div className="rounded-xl border border-border/40 bg-accent/40 px-4 py-3 text-xs text-muted-foreground text-left mb-6 space-y-1">
-              <p className="font-medium text-foreground flex items-center gap-1.5">
+            <div className="rounded-2xl border border-border/40 bg-accent/40 px-4 py-3.5 text-xs text-muted-foreground text-left mb-6 space-y-1.5 backdrop-blur-sm">
+              <p className="font-semibold text-foreground flex items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                 Next steps:
               </p>
-              <p>1. Open the reset email in your inbox (Gmail, Outlook, Yahoo, etc.).</p>
-              <p>2. Check your <strong>Spam or Junk</strong> folder if you don't see it within 2 minutes.</p>
+              <p>1. Open the reset email in your inbox (Gmail, Outlook, etc.).</p>
+              <p>2. Check your <strong>Spam or Junk</strong> folder if not visible within 2 minutes.</p>
               <p>3. The link will safely expire in <strong>30 minutes</strong>.</p>
             </div>
 
@@ -136,7 +143,7 @@ function ForgotPasswordPage() {
                 type="button"
                 onClick={handleResend}
                 disabled={cooldown > 0 || isResending}
-                className="w-full flex items-center justify-center gap-2 rounded-xl border border-border bg-background/80 px-4 py-2.5 text-sm font-medium text-foreground transition-all hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-border/80 bg-background/80 px-4 py-2.5 text-sm font-medium text-foreground transition-all hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed hover-glow"
               >
                 {isResending ? (
                   <>
@@ -163,7 +170,7 @@ function ForgotPasswordPage() {
                   setCooldown(0);
                   setError("");
                 }}
-                className="text-xs text-muted-foreground hover:text-foreground underline transition-colors"
+                className="text-xs text-muted-foreground hover:text-foreground underline transition-colors cursor-pointer"
               >
                 Use a different email address
               </button>
@@ -180,9 +187,9 @@ function ForgotPasswordPage() {
           </div>
         ) : (
           /* ── Initial Form View ── */
-          <div className="rounded-2xl border border-border/60 bg-card/60 p-6 sm:p-8 shadow-xl backdrop-blur-sm">
+          <div className="rounded-3xl border border-border/70 bg-card/70 p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
             <div className="text-center mb-6">
-              <h2 className="text-2xl sm:text-3xl font-bold mb-2">Forgot password?</h2>
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2">Forgot password?</h2>
               <p className="text-sm text-muted-foreground">
                 Enter your registered email address and we'll send you a secure password reset link.
               </p>
@@ -204,7 +211,7 @@ function ForgotPasswordPage() {
                     setError("");
                   }}
                   placeholder="name@example.com"
-                  className="w-full rounded-xl border bg-background/60 px-4 py-2.5 text-sm outline-none transition-all focus:ring-2 focus:ring-primary placeholder:text-muted-foreground/60"
+                  className="w-full rounded-xl border border-border/80 bg-card/60 px-4 py-2.5 text-sm outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
                   style={{ borderColor: error ? "var(--destructive)" : undefined }}
                 />
                 {error && <p className="mt-1.5 text-xs text-destructive">{error}</p>}
@@ -213,7 +220,7 @@ function ForgotPasswordPage() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold gradient-brand text-brand-foreground shadow-lg shadow-orange-950/30 transition-all disabled:opacity-60 hover-lift cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold gradient-brand text-brand-foreground shadow-lg shadow-orange-950/25 transition-all duration-200 disabled:opacity-50 hover-lift cursor-pointer active:scale-[0.98]"
               >
                 {isLoading ? (
                   <>

@@ -13,6 +13,7 @@ import {
   Shield,
   Search,
   CheckCircle,
+  Sparkles,
 } from "lucide-react";
 import {
   Dialog,
@@ -151,34 +152,36 @@ export function UserSettingsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl overflow-hidden p-0 sm:rounded-2xl">
-        <DialogHeader className="border-b px-6 pt-6 pb-4">
-          <DialogTitle className="flex items-center gap-2 text-xl">
-            <UserIcon className="h-5 w-5 text-primary" />
-            Account & Settings
+      <DialogContent className="max-w-2xl overflow-hidden p-0 sm:rounded-3xl border-border/70 bg-card/95 backdrop-blur-2xl shadow-2xl">
+        <DialogHeader className="border-b border-border/50 px-6 pt-6 pb-4">
+          <DialogTitle className="flex items-center gap-2.5 text-xl font-bold tracking-tight">
+            <span className="grid h-8 w-8 place-items-center rounded-xl gradient-brand text-brand-foreground shadow-xs">
+              <UserIcon className="h-4.5 w-4.5" />
+            </span>
+            <span>Account & Settings</span>
           </DialogTitle>
         </DialogHeader>
 
         <Tabs defaultValue="account" className="w-full">
-          <div className="border-b px-6">
-            <TabsList className="h-11 w-full justify-start gap-4 bg-transparent p-0">
+          <div className="border-b border-border/50 px-6">
+            <TabsList className="h-12 w-full justify-start gap-4 bg-transparent p-0">
               <TabsTrigger
                 value="account"
-                className="gap-2 rounded-none border-b-2 border-transparent px-2 pb-3 pt-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground"
+                className="gap-2 rounded-none border-b-2 border-transparent px-3 pb-3.5 pt-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground transition-all"
               >
-                <Shield className="h-4 w-4" />
+                <Shield className="h-4 w-4 text-primary" />
                 Account
               </TabsTrigger>
               <TabsTrigger
                 value="chats"
-                className="gap-2 rounded-none border-b-2 border-transparent px-2 pb-3 pt-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground"
+                className="gap-2 rounded-none border-b-2 border-transparent px-3 pb-3.5 pt-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground transition-all"
               >
                 <MessageSquare className="h-4 w-4" />
                 Saved Chats ({sessions.length})
               </TabsTrigger>
               <TabsTrigger
                 value="keys"
-                className="gap-2 rounded-none border-b-2 border-transparent px-2 pb-3 pt-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground"
+                className="gap-2 rounded-none border-b-2 border-transparent px-3 pb-3.5 pt-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground transition-all"
               >
                 <Key className="h-4 w-4" />
                 API Keys
@@ -189,16 +192,16 @@ export function UserSettingsModal({
           {/* TAB 1: ACCOUNT & SECURITY */}
           <TabsContent value="account" className="space-y-6 p-6">
             {/* User Profile Card */}
-            <div className="flex items-center justify-between rounded-xl border bg-muted/40 p-4">
+            <div className="flex items-center justify-between rounded-2xl border border-border/60 bg-muted/30 p-4.5 backdrop-blur-sm">
               <div className="flex items-center gap-3.5">
                 {user?.avatar_url ? (
                   <img
                     src={user.avatar_url}
                     alt={user.full_name}
-                    className="h-12 w-12 rounded-full border object-cover"
+                    className="h-12 w-12 rounded-full border border-border/60 object-cover shadow-xs"
                   />
                 ) : (
-                  <div className="grid h-12 w-12 place-items-center rounded-full gradient-brand text-sm font-semibold text-brand-foreground">
+                  <div className="grid h-12 w-12 place-items-center rounded-full gradient-brand text-sm font-bold text-brand-foreground shadow-sm">
                     {user?.full_name?.trim()
                       ? user.full_name
                           .trim()
@@ -215,26 +218,26 @@ export function UserSettingsModal({
                     <h3 className="font-semibold text-foreground">
                       {user?.full_name || user?.email || "Guest User"}
                     </h3>
-                    <Badge variant="outline" className="capitalize text-xs">
+                    <Badge variant="outline" className="capitalize text-[11px] px-2 py-0.5">
                       {user?.role || (isGuest ? "Guest" : "User")}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     {user?.email || "Browsing in temporary guest mode"}
                   </p>
                 </div>
               </div>
 
               {user?.provider && (
-                <Badge variant="secondary" className="capitalize text-xs">
+                <Badge variant="secondary" className="capitalize text-xs px-2.5 py-1">
                   {user.provider} Auth
                 </Badge>
               )}
             </div>
 
             {/* Account Actions */}
-            <div className="space-y-3 pt-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="space-y-3 pt-1">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
                 Session Actions
               </h4>
 
@@ -246,7 +249,7 @@ export function UserSettingsModal({
                       onOpenChange(false);
                       navigate({ to: "/admin" });
                     }}
-                    className="h-11 justify-start gap-2.5 rounded-xl border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 sm:col-span-2"
+                    className="h-11 justify-start gap-2.5 rounded-xl border-primary/40 bg-primary/5 text-primary hover:bg-primary/10 sm:col-span-2 cursor-pointer"
                   >
                     <Shield className="h-4 w-4" />
                     <span className="font-semibold">Open Admin Control Panel</span>
@@ -256,7 +259,7 @@ export function UserSettingsModal({
                 <Button
                   variant="outline"
                   onClick={handleAddAccount}
-                  className="h-11 justify-start gap-2.5 rounded-xl border-dashed"
+                  className="h-11 justify-start gap-2.5 rounded-xl border-border/80 hover:bg-accent cursor-pointer"
                 >
                   <UserPlus className="h-4 w-4 text-primary" />
                   <span>Add another account</span>
@@ -265,7 +268,7 @@ export function UserSettingsModal({
                 <Button
                   variant="destructive"
                   onClick={handleLogout}
-                  className="h-11 justify-start gap-2.5 rounded-xl"
+                  className="h-11 justify-start gap-2.5 rounded-xl cursor-pointer"
                 >
                   <LogOut className="h-4 w-4" />
                   <span>Log out of SS Spark</span>
@@ -277,20 +280,20 @@ export function UserSettingsModal({
           {/* TAB 2: SAVED CHATS */}
           <TabsContent value="chats" className="space-y-4 p-6">
             <div className="relative">
-              <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
               <Input
                 value={chatSearch}
                 onChange={(e) => setChatSearch(e.target.value)}
                 placeholder="Search saved chats..."
-                className="pl-9 text-sm"
+                className="pl-10 h-10 text-sm bg-background/50 border-border/70 rounded-xl"
               />
             </div>
 
             <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
               {pinnedSessions.length > 0 && (
                 <div>
-                  <p className="mb-1 text-[11px] font-semibold text-muted-foreground uppercase">
-                    Pinned
+                  <p className="mb-1.5 text-[11px] font-bold text-muted-foreground/80 uppercase tracking-wider">
+                    Pinned Chats
                   </p>
                   <div className="space-y-1.5">
                     {pinnedSessions.map((session) => (
@@ -311,7 +314,7 @@ export function UserSettingsModal({
 
               <div>
                 {pinnedSessions.length > 0 && (
-                  <p className="mt-3 mb-1 text-[11px] font-semibold text-muted-foreground uppercase">
+                  <p className="mt-3.5 mb-1.5 text-[11px] font-bold text-muted-foreground/80 uppercase tracking-wider">
                     All Chats
                   </p>
                 )}
@@ -332,7 +335,7 @@ export function UserSettingsModal({
               </div>
 
               {filteredSessions.length === 0 && (
-                <div className="py-8 text-center text-sm text-muted-foreground">
+                <div className="py-10 text-center text-sm text-muted-foreground">
                   {chatSearch ? "No matching chats found." : "No saved chats yet."}
                 </div>
               )}
@@ -342,7 +345,7 @@ export function UserSettingsModal({
           {/* TAB 3: API KEYS */}
           <TabsContent value="keys" className="p-6">
             <form onSubmit={handleSaveKeys} className="space-y-4">
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-foreground">OpenAI API Key</label>
                 <div className="relative">
                   <Input
@@ -352,7 +355,7 @@ export function UserSettingsModal({
                     placeholder={
                       keysStatus.has_openai ? "•••••••••••••••• (Configured)" : "sk-..."
                     }
-                    className="text-sm"
+                    className="text-sm rounded-xl h-10 pr-10"
                   />
                   {keysStatus.has_openai && (
                     <CheckCircle className="absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-emerald-500" />
@@ -360,7 +363,7 @@ export function UserSettingsModal({
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-foreground">
                   Google Gemini API Key
                 </label>
@@ -372,7 +375,7 @@ export function UserSettingsModal({
                     placeholder={
                       keysStatus.has_gemini ? "•••••••••••••••• (Configured)" : "AIzaSy..."
                     }
-                    className="text-sm"
+                    className="text-sm rounded-xl h-10 pr-10"
                   />
                   {keysStatus.has_gemini && (
                     <CheckCircle className="absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-emerald-500" />
@@ -380,7 +383,7 @@ export function UserSettingsModal({
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-foreground">
                   Anthropic Claude API Key
                 </label>
@@ -392,7 +395,7 @@ export function UserSettingsModal({
                     placeholder={
                       keysStatus.has_anthropic ? "•••••••••••••••• (Configured)" : "sk-ant-..."
                     }
-                    className="text-sm"
+                    className="text-sm rounded-xl h-10 pr-10"
                   />
                   {keysStatus.has_anthropic && (
                     <CheckCircle className="absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-emerald-500" />
@@ -401,7 +404,7 @@ export function UserSettingsModal({
               </div>
 
               <div className="flex justify-end pt-2">
-                <Button type="submit" disabled={keysLoading} className="gradient-brand">
+                <Button type="submit" disabled={keysLoading} className="gradient-brand text-brand-foreground shadow-md shadow-primary/20 hover-lift cursor-pointer">
                   {keysLoading ? "Saving..." : "Save API Keys"}
                 </Button>
               </div>
@@ -425,49 +428,49 @@ function ChatItemRow({
   onDelete: () => void;
 }) {
   return (
-    <div className="group flex items-center justify-between rounded-xl border bg-card px-3 py-2.5 transition-colors hover:bg-accent/50">
+    <div className="group flex items-center justify-between rounded-xl border border-border/50 bg-card/60 px-3.5 py-2.5 transition-all hover:bg-accent/60 hover:border-border/80">
       <button
         onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        className="flex min-w-0 flex-1 items-center gap-2.5 text-left cursor-pointer"
       >
-        <MessageSquare className="h-4 w-4 shrink-0 text-primary opacity-70" />
+        <MessageSquare className="h-4 w-4 shrink-0 text-primary opacity-70 group-hover:opacity-100 transition-opacity" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{session.title}</p>
+          <p className="truncate text-sm font-medium text-foreground group-hover:text-primary transition-colors">{session.title}</p>
           <p className="truncate text-[11px] text-muted-foreground">
             {session.message_count || 0} messages · {new Date(session.updated_at).toLocaleDateString()}
           </p>
         </div>
       </button>
 
-      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+      <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className="h-7 w-7 rounded-lg"
           onClick={onTogglePin}
           title={session.pinned ? "Unpin" : "Pin to top"}
         >
           <Star
-            className={`h-4 w-4 ${session.pinned ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`}
+            className={`h-3.5 w-3.5 ${session.pinned ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`}
           />
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className="h-7 w-7 rounded-lg"
           onClick={onSelect}
           title="Open chat"
         >
-          <ExternalLink className="h-4 w-4 text-muted-foreground" />
+          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 text-destructive hover:bg-destructive/10"
+          className="h-7 w-7 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10"
           onClick={onDelete}
           title="Delete chat"
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-3.5 w-3.5" />
         </Button>
       </div>
     </div>

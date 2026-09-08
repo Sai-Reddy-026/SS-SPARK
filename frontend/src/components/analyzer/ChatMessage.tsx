@@ -36,10 +36,10 @@ export const ChatMessage = memo(function ChatMessage({
     return (
       <div className="animate-message-in flex justify-end px-2 sm:px-4">
         <div className="flex max-w-[80%] flex-col items-end gap-1 sm:max-w-[65%]">
-          <div className="rounded-3xl rounded-br-md bg-[#2f2f2f] dark:bg-[#2f2f2f] light:bg-[#ececec] px-4 py-3 text-[0.95rem] leading-relaxed text-foreground shadow-sm">
+          <div className="user-bubble rounded-3xl rounded-br-md px-4 py-3 text-[0.95rem] leading-relaxed text-foreground shadow-sm">
             {message.content}
           </div>
-          <p className="flex items-center gap-1 pr-1 text-[11px] text-muted-foreground/70">
+          <p className="flex items-center gap-1 pr-1 text-[11px] text-muted-foreground/50">
             <Clock className="h-3 w-3" />
             {formatTime(message.createdAt)}
           </p>
@@ -103,13 +103,23 @@ export const ChatMessage = memo(function ChatMessage({
             ) : (
               message.confidence !== undefined &&
               message.confidence !== null && (
-                <Badge variant="secondary" className="gap-1 text-[11px]">
-                  <BadgeCheck className="h-3 w-3 text-chart-5" />
+                <Badge
+                  variant="secondary"
+                  className={cn(
+                    "gap-1 text-[11px]",
+                    message.confidence >= 0.8
+                      ? "border-success/30 text-success"
+                      : message.confidence >= 0.6
+                      ? "border-warning/30 text-warning"
+                      : "border-destructive/30 text-destructive"
+                  )}
+                >
+                  <BadgeCheck className="h-3 w-3" />
                   {Math.round(message.confidence * 100)}% confidence
                 </Badge>
               )
             )}
-            <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground/70">
+            <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground/50">
               <Clock className="h-3 w-3" />
               {formatTime(message.createdAt)}
             </span>
@@ -159,7 +169,7 @@ export const ChatMessage = memo(function ChatMessage({
 
           {/* Action row — visible on hover */}
           {!message.isStreaming && (
-            <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <div className="mt-3 flex items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
               <ActionButton
                 label="Copy"
                 icon={Copy}

@@ -8,6 +8,7 @@ export interface UploadedDoc {
   uploadedAt: Date;
   pages: number;
   previewUrl?: string | undefined;
+  questionsCount?: number;
 }
 
 export interface Citation {
@@ -16,6 +17,14 @@ export interface Citation {
   page: number;
   snippet: string;
   relevance: number;
+}
+
+export interface ChatAttachment {
+  name: string;
+  type: string;
+  size: number;
+  previewUrl?: string;
+  dataUrl?: string;
 }
 
 export interface ChatMessageData {
@@ -29,6 +38,8 @@ export interface ChatMessageData {
   status?: string;
   /** True while the assistant message is still streaming tokens */
   isStreaming?: boolean;
+  /** Attached image or document for this message */
+  attachment?: ChatAttachment;
 }
 
 

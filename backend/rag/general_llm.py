@@ -32,10 +32,10 @@ FIRST_TOKEN_TIMEOUT_S = 3.5
 
 # Model definitions per provider
 GEMINI_MODELS = [
-    "gemini/gemini-3.5-flash-lite",
-    "gemini/gemini-3.5-flash",
-    "gemini/gemini-3.7-flash",
     "gemini/gemini-3.6-flash",
+    "gemini/gemini-3.7-flash",
+    "gemini/gemini-3.5-flash",
+    "gemini/gemini-3.5-flash-lite",
 ]
 
 NVIDIA_MODELS = [
@@ -156,25 +156,217 @@ def _format_messages(
     return messages
 
 
-async def general_chat(
+def prepare_image_for_vision(image_input: Any) -> Optional[Any]:
+    """Normalize various image inputs (PIL Image, path str/Path, base64 data URL) into PIL Image."""
+    if image_input is None:
+        return None
+    import io
+    import base64
+    from pathlib import Path
+    from PIL import Image
+
+    if isinstance(image_input, Image.Image):
+        return image_input
+
+    if isinstance(image_input, (str, Path)):
+        s = str(image_input).strip()
+        # Data URL: data:image/png;base64,...
+        if s.startswith("data:image/") and ";base64," in s:
+            try:
+                b64_part = s.split(";base64,")[1]
+                return Image.open(io.BytesIO(base64.b64decode(b64_part)))
+            except Exception as e:
+                logger.warning("Failed to decode base64 data URL: %s", e)
+                return None
+        # File path
+        p = Path(s)
+        if p.exists() and p.is_file():
+            try:
+                return Image.open(str(p))
+            except Exception as e:
+                logger.warning("Failed to open image file '%s': %s", p, e)
+                return None
+        # Raw base64 string
+        if len(s) > 100:
+            try:
+                return Image.open(io.BytesIO(base64.b64decode(s)))
+            except Exception:
+                pass
+    return None
+
+
+async def vision_chat(
     question: str,
+    image_input: Any,
     system_prompt: Optional[str] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     req_id: str = "",
 ) -> Dict[str, Any]:
     """
-    Non-streaming LLM invocation with Gemini primary -> NVIDIA fallback.
-
-    Returns dict matching standard shape:
-      {
-          "answer": str,
-          "sources": [],
-          "confidence": None,
-          "references": "",
-          "cost": float,
-          "status": "general" | "success" | "error",
-      }
+    Multimodal visual question answering with Google Gemini Vision.
+    Solves questions from question papers, diagrams, mathematical formulas, and handwritten notes.
     """
+    tag = f"[{req_id}] " if req_id else ""
+    pil_img = prepare_image_for_vision(image_input)
+    if pil_img is None:
+        return await general_chat(question, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id)
+
+    try:
+        import google.generativeai as genai
+        gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+        if not gemini_key:
+            raise ValueError("GEMINI_API_KEY not configured for vision.")
+        genai.configure(api_key=gemini_key)
+
+        prompt_parts = []
+        full_sys_prompt = system_prompt or (
+            "You are SS SPARK AI — an expert academic assistant specializing in solving question papers, "
+            "exams, mathematical problems, diagrams, and study materials.\n"
+            "- Carefully inspect the image to identify question numbers, formulas, diagrams, and options.\n"
+            "- If the user asks 'solve this' or 'answer question X', locate the question and provide a complete, "
+            "step-by-step solution.\n"
+            "- For numerical problems: State given info, formula, calculation steps, and final answer.\n"
+            "- For MCQs: Identify the correct option and explain why.\n"
+            "- Format mathematical equations cleanly using LaTeX ($...$ inline, $$...$$ block)."
+        )
+        prompt_parts.append(full_sys_prompt)
+
+        if chat_history:
+            history_text = "\n".join(
+                f"{m.get('role', 'user').title()}: {m.get('content', '')}"
+                for m in chat_history[-6:]
+                if m.get("content")
+            )
+            if history_text:
+                prompt_parts.append(f"CONVERSATION HISTORY:\n{history_text}")
+
+        prompt_parts.append(f"USER QUESTION: {question}")
+        prompt_parts.append(pil_img)
+
+        models_to_try = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash"]
+        for m_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(m_name)
+                logger.info("%svision_llm_start model=%s", tag, m_name)
+                res = await model.generate_content_async(prompt_parts)
+                answer = res.text or ""
+                logger.info("%svision_llm_complete model=%s (%d chars)", tag, m_name, len(answer))
+                return {
+                    "answer": answer,
+                    "sources": [],
+                    "confidence": 0.95,
+                    "references": "",
+                    "cost": 0.0001,
+                    "status": "success",
+                }
+            except Exception as m_err:
+                logger.warning("%svision model %s failed: %s", tag, m_name, m_err)
+                continue
+
+    except Exception as exc:
+        logger.exception("%sDirect vision failed: %s", tag, exc)
+
+    return await general_chat(question, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id)
+
+
+async def vision_chat_stream(
+    question: str,
+    image_input: Any,
+    system_prompt: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    req_id: str = "",
+) -> AsyncGenerator[Tuple[str, str], None]:
+    """
+    Streaming Multimodal visual question answering.
+    Yields ("token", token_text).
+    """
+    tag = f"[{req_id}] " if req_id else ""
+    pil_img = prepare_image_for_vision(image_input)
+    if pil_img is None:
+        async for chunk in general_chat_stream(question, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id):
+            yield chunk
+        return
+
+    try:
+        import google.generativeai as genai
+        gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+        if not gemini_key:
+            raise ValueError("GEMINI_API_KEY not configured for vision.")
+        genai.configure(api_key=gemini_key)
+
+        prompt_parts = []
+        full_sys_prompt = system_prompt or (
+            "You are SS SPARK AI — an expert academic assistant specializing in solving question papers, "
+            "exams, mathematical problems, diagrams, and study materials.\n"
+            "- Carefully inspect the image to identify question numbers, formulas, diagrams, and options.\n"
+            "- If the user asks 'solve this' or 'answer question X', locate the question and provide a complete, "
+            "step-by-step solution.\n"
+            "- For numerical problems: State given info, formula, calculation steps, and final answer.\n"
+            "- For MCQs: Identify the correct option and explain why.\n"
+            "- Format mathematical equations cleanly using LaTeX ($...$ inline, $$...$$ block)."
+        )
+        prompt_parts.append(full_sys_prompt)
+
+        if chat_history:
+            history_text = "\n".join(
+                f"{m.get('role', 'user').title()}: {m.get('content', '')}"
+                for m in chat_history[-6:]
+                if m.get("content")
+            )
+            if history_text:
+                prompt_parts.append(f"CONVERSATION HISTORY:\n{history_text}")
+
+        prompt_parts.append(f"USER QUESTION: {question}")
+        prompt_parts.append(pil_img)
+
+        models_to_try = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash"]
+        yielded_any = False
+        for m_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(m_name)
+                logger.info("%svision_stream_start model=%s", tag, m_name)
+                response = await model.generate_content_async(prompt_parts, stream=True)
+                async for chunk in response:
+                    text_chunk = chunk.text
+                    if text_chunk:
+                        yielded_any = True
+                        yield ("token", text_chunk)
+                if yielded_any:
+                    logger.info("%svision_stream_complete model=%s", tag, m_name)
+                    return
+            except Exception as m_err:
+                logger.warning("%svision stream model %s failed: %s", tag, m_name, m_err)
+                if yielded_any:
+                    yield ("reset", "")
+                    yielded_any = False
+                continue
+
+    except Exception as exc:
+        logger.exception("%svision_stream unhandled error: %s", tag, exc)
+
+    async for chunk in general_chat_stream(question, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id):
+        yield chunk
+
+
+async def general_chat(
+    question: str,
+    system_prompt: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    req_id: str = "",
+    image_data: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Non-streaming LLM invocation with Gemini primary -> NVIDIA fallback.
+    If image_data is provided, automatically routes through multimodal vision pipeline.
+    """
+    if image_data is not None:
+        return await vision_chat(
+            question=question,
+            image_input=image_data,
+            system_prompt=system_prompt,
+            chat_history=chat_history,
+            req_id=req_id,
+        )
     import litellm
 
     tag = f"[{req_id}] " if req_id else ""
@@ -242,20 +434,26 @@ async def general_chat_stream(
     system_prompt: Optional[str] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     req_id: str = "",
+    image_data: Optional[Any] = None,
 ) -> AsyncGenerator[Tuple[str, str], None]:
     """
     Streaming LLM invocation yielding tuples (event_type, payload):
         ("token", token_text)  — standard LLM token
         ("reset", "")          — emitted if a mid-stream provider switch occurs
 
-    Guarantees:
-      - Gemini is attempted first.
-      - First-token timeout (3.5s) is wrapped directly on __anext__() so stalled
-        Gemini streams fail over to NVIDIA immediately without hanging for 45s.
-      - If Gemini fails mid-stream after emitting partial tokens, yields ("reset", "") and then streams
-        the clean, complete response from NVIDIA from scratch (0 duplicate text).
-      - If all providers fail, yields a helpful inline error token.
+    If image_data is provided, automatically streams through the multimodal vision pipeline.
     """
+    if image_data is not None:
+        async for chunk in vision_chat_stream(
+            question=question,
+            image_input=image_data,
+            system_prompt=system_prompt,
+            chat_history=chat_history,
+            req_id=req_id,
+        ):
+            yield chunk
+        return
+
     import litellm
 
     tag = f"[{req_id}] " if req_id else ""

@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalyzerSidebar, type SidebarChat } from "@/components/analyzer/AnalyzerSidebar";
 import { Navbar } from "@/components/analyzer/Navbar";
 import { ChatMessage, TypingIndicator } from "@/components/analyzer/ChatMessage";
-import { ChatComposer } from "@/components/analyzer/ChatComposer";
+import { ChatComposer, type AttachedFile } from "@/components/analyzer/ChatComposer";
 import { UploadCard, ImagePreviewCard } from "@/components/analyzer/UploadCard";
 import { UploadDropzone } from "@/components/analyzer/UploadDropzone";
 import {
@@ -322,8 +322,9 @@ function AnalyzerPage() {
 
   // ─── Core streaming send function ──────────────────────────────────────────
   const sendMessage = useCallback(
-    (text: string) => {
-      if (!text.trim()) return;
+    (text: string, attachment?: AttachedFile | null) => {
+      const trimmed = text.trim();
+      if (!trimmed && !attachment) return;
       // Prevent duplicate submission
       if (sendingRef.current) return;
       sendingRef.current = true;
@@ -331,34 +332,57 @@ function AnalyzerPage() {
       // Abort any previous in-flight request
       abortControllerRef.current?.abort();
 
-      // Unique ID for this specific request — guards against stale closures
-      const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-
       // Placeholder message IDs
       const userMsgId = `u-${Date.now()}`;
       const assistantMsgId = `a-${Date.now() + 1}`;
 
+      const userAtt = attachment
+        ? {
+            name: attachment.name,
+            type: attachment.type,
+            size: attachment.size,
+            previewUrl: attachment.previewUrl,
+            dataUrl: attachment.dataUrl,
+          }
+        : undefined;
+
+      const finalText = trimmed || "Please solve and analyze the questions in this attached paper.";
+
       setMessages((current) => [
         ...current,
-        { id: userMsgId, role: "user", content: text, createdAt: new Date() },
+        {
+          id: userMsgId,
+          role: "user",
+          content: finalText,
+          attachment: userAtt,
+          createdAt: new Date(),
+        },
       ]);
       setInput("");
       setLoading(true);
-      setStreamingPhase("thinking");
+      setStreamingPhase(attachment ? "reading_paper" : "thinking");
       scrollToBottom(true);
 
-      if (isAuthenticated) {
-        // Capture the current session ID from the ref (not closure) so
-        // a quick second send doesn't pick up the wrong session
-        const sessionIdAtSend = activeChatRef.current ?? undefined;
+      const attachmentPayload = attachment
+        ? {
+            name: attachment.name,
+            type: attachment.type,
+            size: attachment.size,
+            data_url: attachment.dataUrl,
+            preview_url: attachment.previewUrl,
+          }
+        : undefined;
 
-        const controller = chatApi.sendStream(text, sessionIdAtSend, {
+      const sessionIdAtSend = activeChatRef.current ?? undefined;
+
+      const controller = chatApi.sendStream(
+        finalText,
+        sessionIdAtSend,
+        {
           onSession: (sid) => {
-            // Set session ID as soon as the server acknowledges it
             if (!activeChatRef.current) {
               setActiveChat(sid);
             }
-            // Update placeholder message with the real session
           },
           onPhase: (phase) => {
             setStreamingPhase(phase);
@@ -379,7 +403,6 @@ function AnalyzerPage() {
             setMessages((current) => {
               const idx = current.findIndex((m) => m.id === assistantMsgId);
               if (idx === -1) {
-                // First token — add the assistant placeholder
                 return [
                   ...current,
                   {
@@ -391,7 +414,6 @@ function AnalyzerPage() {
                   },
                 ];
               }
-              // Append token to the existing message
               const updated = [...current];
               updated[idx] = {
                 ...updated[idx],
@@ -416,11 +438,9 @@ function AnalyzerPage() {
             });
           },
           onError: (errMsg) => {
-            // Show inline error message in chat
             setMessages((current) => {
               const idx = current.findIndex((m) => m.id === assistantMsgId);
               if (idx !== -1) {
-                // Update existing placeholder with error
                 const updated = [...current];
                 updated[idx] = {
                   ...updated[idx],
@@ -430,7 +450,6 @@ function AnalyzerPage() {
                 };
                 return updated;
               }
-              // Add error as new message if no placeholder yet
               return [
                 ...current,
                 {
@@ -448,7 +467,6 @@ function AnalyzerPage() {
             setLoading(false);
             setStreamingPhase("");
             sendingRef.current = false;
-            // Mark streaming as finished on the message
             setMessages((current) => {
               const idx = current.findIndex((m) => m.id === assistantMsgId);
               if (idx === -1) return current;
@@ -457,31 +475,15 @@ function AnalyzerPage() {
               updated[idx] = { ...updated[idx], isStreaming: false };
               return updated;
             });
-            // Refresh sessions list after sending so new sessions appear in sidebar
-            loadSessions();
+            if (isAuthenticated) {
+              loadSessions();
+            }
           },
-        });
+        },
+        attachmentPayload,
+      );
 
-        abortControllerRef.current = controller;
-      } else {
-        // Guest / demo mode — use sample answer
-        window.setTimeout(() => {
-          setMessages((current) => [
-            ...current,
-            {
-              id: assistantMsgId,
-              role: "assistant",
-              content: sampleAnswer,
-              createdAt: new Date(),
-              confidence: 0.89,
-              citations: sampleCitations,
-            },
-          ]);
-          setLoading(false);
-          setStreamingPhase("");
-          sendingRef.current = false;
-        }, 1600);
-      }
+      abortControllerRef.current = controller;
     },
     [isAuthenticated, loadSessions, scrollToBottom],
   );
@@ -570,9 +572,12 @@ function AnalyzerPage() {
     }, 50);
   }, [messages, sendMessage]);
 
-  const send = useCallback(() => {
-    sendMessage(input.trim());
-  }, [input, sendMessage]);
+  const send = useCallback(
+    (text?: string, att?: AttachedFile | null) => {
+      sendMessage(text ?? input, att);
+    },
+    [input, sendMessage],
+  );
 
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort();

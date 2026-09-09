@@ -58,6 +58,201 @@ def is_tesseract_available() -> bool:
     return get_tesseract_cmd() is not None
 
 
+def preprocess_image_for_vision(img: Any) -> Any:
+    """Prepare PIL image for Gemini Vision: fix EXIF orientation, bound maximum dimension to 3000px."""
+    from PIL import Image, ImageOps
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception as exc:
+        logger.debug("EXIF transposition skipped in vision prep: %s", exc)
+
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    w, h = img.size
+    max_dim = max(w, h)
+    if max_dim > 3000:
+        scale = 3000.0 / float(max_dim)
+        img = img.resize((int(w * scale), int(h * scale)), resample=Image.Resampling.LANCZOS)
+    elif max_dim < 1200:
+        scale = min(2.5, 1800.0 / float(max_dim or 1))
+        img = img.resize((int(w * scale), int(h * scale)), resample=Image.Resampling.LANCZOS)
+    return img
+
+
+def _parse_json_from_llm(raw: str) -> Optional[Dict[str, Any]]:
+    """Parse JSON dictionary safely from LLM output, extracting from markdown code blocks or brackets."""
+    if not raw:
+        return None
+    raw = raw.strip()
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except Exception:
+            pass
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(raw[start : end + 1])
+        except Exception:
+            pass
+    return None
+
+
+def _get_gemini_api_key() -> str:
+    """Retrieve Gemini API key from settings or environment."""
+    try:
+        from core.config import get_settings
+        key = get_settings().GEMINI_API_KEY
+        if key:
+            return key.strip()
+    except Exception:
+        pass
+    return (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+
+
+def extract_structured_question_paper(
+    image_path: str,
+) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Extract structured question paper content using Google Gemini Multimodal Vision.
+    Extracts exam title, sections, questions with numbers, options, marks, diagrams, and LaTeX math.
+    """
+    path = Path(image_path)
+    if not path.exists():
+        logger.error("Image file not found: %s", image_path)
+        return "", [], {"success": False, "method": "none", "confidence": 0.0}
+
+    from PIL import Image
+    import google.generativeai as genai
+    gemini_key = _get_gemini_api_key()
+    if not gemini_key:
+        logger.warning("GEMINI_API_KEY not configured for visual question extraction.")
+        return "", [], {"success": False, "method": "none", "confidence": 0.0}
+
+    try:
+        genai.configure(api_key=gemini_key)
+        with Image.open(str(path)) as raw_img:
+            pil_img = preprocess_image_for_vision(raw_img)
+
+        prompt = (
+            "You are an expert academic document and question paper analyzer.\n"
+            "Carefully read and analyze this question paper / exam / study document image.\n"
+            "Extract every question, section, and problem with maximum precision.\n"
+            "Preserve:\n"
+            "1. Question numbers exactly as written (e.g. Q1, Q2, Question 3, 4(a)).\n"
+            "2. Section/Part headings (e.g. SECTION A, Part II).\n"
+            "3. Marks allotted (e.g. 5 Marks, [10M]).\n"
+            "4. MCQs and all options ((A), (B), (C), (D)).\n"
+            "5. Mathematical, physics, and chemical expressions in clean LaTeX (use $...$ for inline and $$...$$ for block).\n"
+            "6. Explicitly note and describe any diagrams, graphs, circuits, or tables visible.\n\n"
+            "Return ONLY a JSON object with this exact schema:\n"
+            "{\n"
+            '  "title": "Title or subject of paper",\n'
+            '  "sections": ["SECTION A", ...],\n'
+            '  "full_text": "Complete transcribed markdown text of the document",\n'
+            '  "questions": [\n'
+            '    {\n'
+            '      "q_num": "Q1",\n'
+            '      "section": "SECTION A",\n'
+            '      "marks": "5 Marks",\n'
+            '      "text": "Full text of the question...",\n'
+            '      "options": ["(A)...", "(B)..."],\n'
+            '      "has_diagram": false,\n'
+            '      "diagram_description": ""\n'
+            '    }\n'
+            '  ]\n'
+            "}\n"
+            "If there are no explicit question numbers, extract the problems or paragraphs into the questions list with q_num 'Q1', 'Q2', etc."
+        )
+
+        models_to_try = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash"]
+        for m_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(m_name)
+                logger.info("Extracting structured questions from '%s' via %s", path.name, m_name)
+                res = model.generate_content([prompt, pil_img])
+                data = _parse_json_from_llm(res.text)
+                if data and isinstance(data, dict):
+                    full_text = data.get("full_text", "").strip()
+                    questions = data.get("questions", [])
+                    if not full_text and questions:
+                        parts = []
+                        if data.get("title"):
+                            parts.append(f"# {data['title']}\n")
+                        for q in questions:
+                            parts.append(f"### {q.get('q_num', '')} ({q.get('marks', '')})\n{q.get('text', '')}")
+                        full_text = "\n\n".join(parts)
+                    meta = {
+                        "success": True,
+                        "method": "vision",
+                        "confidence": 96.0,
+                        "title": data.get("title", ""),
+                        "sections": data.get("sections", []),
+                        "question_count": len(questions),
+                    }
+                    logger.info("Vision extracted %d questions and %d chars from '%s'", len(questions), len(full_text), path.name)
+                    return full_text, questions, meta
+            except Exception as m_err:
+                logger.warning("Vision model %s failed on '%s': %s", m_name, path.name, m_err)
+                continue
+
+    except Exception as exc:
+        logger.exception("Visual question extraction failed for '%s': %s", path.name, exc)
+
+    return "", [], {"success": False, "method": "vision_error", "confidence": 0.0}
+
+
+def extract_text_hybrid(image_or_path: Any, lang: Optional[str] = None) -> Tuple[str, float, bool]:
+    """
+    Hybrid text extraction: attempts Tesseract if available, else Gemini Vision.
+    Returns: (text, confidence, success)
+    """
+    from PIL import Image
+    if isinstance(image_or_path, (str, Path)):
+        p = Path(image_or_path)
+        if not p.exists():
+            return "", 0.0, False
+        try:
+            with Image.open(str(p)) as img:
+                return extract_text_hybrid(img, lang=lang)
+        except Exception:
+            return "", 0.0, False
+
+    # Try Tesseract if installed
+    if is_tesseract_available():
+        text, conf, success = extract_text_with_confidence(image_or_path, lang=lang)
+        if success and conf >= 60.0 and len(text) > 30:
+            return text, conf, True
+
+    # Fallback to Gemini Vision
+    try:
+        gemini_key = _get_gemini_api_key()
+        if gemini_key:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-3.6-flash")
+            pil_img = preprocess_image_for_vision(image_or_path)
+            res = model.generate_content([
+                "Transcribe all readable text from this document image with high fidelity. "
+                "Preserve question numbering, tables, sections, and format math equations in LaTeX.",
+                pil_img
+            ])
+            text = res.text.strip()
+            if text:
+                return text, 95.0, True
+    except Exception as exc:
+        logger.warning("Hybrid vision fallback error: %s", exc)
+
+    return "", 0.0, False
+
+
 def preprocess_image_for_ocr(img: Any) -> Any:
     """
     Intelligent adaptive image preprocessor for question papers, scans, and screenshots:
@@ -227,67 +422,167 @@ def process_image_to_chunks(
     lang: Optional[str] = None,
 ) -> Tuple[str, List[Any], Dict[str, Any]]:
     """
-    Perform OCR on an image, write/validate sidecars, and generate structured TextChunks.
+    Perform high-precision structured question paper and image extraction.
+    
+    Pipeline:
+      1. Sidecar cache validation (*_ocr.txt, *_questions.json)
+      2. Multimodal Gemini Vision question extraction (questions, options, LaTeX math, diagrams)
+      3. Fallback to adaptive Tesseract OCR if vision unavailable
+      4. Generates structure-preserving TextChunks with question_number, section, and marks
     
     Returns:
-      (extracted_text: str, chunks: List[TextChunk], ocr_metadata: Dict[str, Any])
+      (extracted_text: str, chunks: List[TextChunk], metadata: Dict[str, Any])
     """
     from services.pdf_service import _split_into_structured_chunks, TextChunk
 
     img_path = Path(image_path)
     sidecar_path = img_path.parent / f"{img_path.stem}_ocr.txt"
     meta_path = img_path.parent / f"{img_path.stem}_ocr.json"
+    questions_path = img_path.parent / f"{img_path.stem}_questions.json"
 
     extracted_text = ""
+    questions: List[Dict[str, Any]] = []
     ocr_conf = 0.0
     ocr_success = False
+    extraction_method = "vision"
 
     # 1. Check existing sidecar cache
     if sidecar_path.exists():
         cached_text = sidecar_path.read_text(encoding="utf-8", errors="ignore").strip()
-        # Ensure cached text is not old fake failure placeholder
         if cached_text and not cached_text.startswith("[Image Document:"):
             extracted_text = cached_text
             ocr_success = True
             if meta_path.exists():
                 try:
                     meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
-                    ocr_conf = float(meta_data.get("confidence", 85.0))
+                    ocr_conf = float(meta_data.get("confidence", 95.0))
+                    extraction_method = meta_data.get("method", "vision")
                 except Exception:
-                    ocr_conf = 85.0
-            logger.debug("Loaded OCR text from sidecar cache for '%s'", img_path.name)
+                    ocr_conf = 95.0
 
-    # 2. Extract fresh OCR if not cached
+            if questions_path.exists():
+                try:
+                    q_data = json.loads(questions_path.read_text(encoding="utf-8"))
+                    questions = q_data.get("questions", [])
+                except Exception:
+                    questions = []
+            logger.debug("Loaded structured OCR/Vision text from sidecar cache for '%s'", img_path.name)
+
+    # 2. Extract fresh content if not cached
     if not extracted_text:
+        # A. Primary: Gemini Vision Structured Question Extraction
         try:
-            from PIL import Image
-            with Image.open(str(img_path)) as img:
-                extracted_text, ocr_conf, ocr_success = extract_text_with_confidence(img, lang=lang)
-        except Exception as exc:
-            logger.warning("OCR execution failed for '%s': %s", img_path.name, exc)
-            extracted_text = ""
-            ocr_conf = 0.0
-            ocr_success = False
+            full_text, q_list, v_meta = extract_structured_question_paper(str(img_path))
+            if v_meta.get("success") and full_text.strip():
+                extracted_text = full_text.strip()
+                questions = q_list
+                ocr_conf = v_meta.get("confidence", 96.0)
+                ocr_success = True
+                extraction_method = "vision"
 
-        # Write sidecar files if text was successfully extracted
-        if extracted_text and ocr_success:
+                # Write persistent sidecars
+                try:
+                    sidecar_path.write_text(extracted_text, encoding="utf-8")
+                    questions_path.write_text(
+                        json.dumps({
+                            "title": v_meta.get("title", ""),
+                            "sections": v_meta.get("sections", []),
+                            "questions": questions,
+                        }, indent=2),
+                        encoding="utf-8",
+                    )
+                    meta_path.write_text(
+                        json.dumps({
+                            "filename": img_path.name,
+                            "confidence": ocr_conf,
+                            "success": True,
+                            "method": "vision",
+                            "char_count": len(extracted_text),
+                            "question_count": len(questions),
+                        }),
+                        encoding="utf-8",
+                    )
+                except Exception as sidecar_err:
+                    logger.warning("Failed to write sidecars for '%s': %s", img_path.name, sidecar_err)
+
+        except Exception as vision_err:
+            logger.warning("Vision question extraction error for '%s': %s", img_path.name, vision_err)
+
+        # B. Fallback to Tesseract OCR if Vision was unavailable
+        if not extracted_text:
             try:
-                sidecar_path.write_text(extracted_text, encoding="utf-8")
-                meta_path.write_text(
-                    json.dumps({
-                        "filename": img_path.name,
-                        "confidence": ocr_conf,
-                        "success": True,
-                        "char_count": len(extracted_text),
-                    }),
-                    encoding="utf-8",
-                )
-            except Exception as sidecar_err:
-                logger.warning("Failed to write OCR sidecar for '%s': %s", img_path.name, sidecar_err)
+                from PIL import Image
+                with Image.open(str(img_path)) as img:
+                    extracted_text, ocr_conf, ocr_success = extract_text_with_confidence(img, lang=lang)
+                    if ocr_success:
+                        extraction_method = "ocr"
+                        try:
+                            sidecar_path.write_text(extracted_text, encoding="utf-8")
+                            meta_path.write_text(
+                                json.dumps({
+                                    "filename": img_path.name,
+                                    "confidence": ocr_conf,
+                                    "success": True,
+                                    "method": "ocr",
+                                    "char_count": len(extracted_text),
+                                    "question_count": 0,
+                                }),
+                                encoding="utf-8",
+                            )
+                        except Exception:
+                            pass
+            except Exception as ocr_err:
+                logger.warning("Tesseract OCR fallback failed for '%s': %s", img_path.name, ocr_err)
 
     # 3. Build structured text chunks
     chunks: List[TextChunk] = []
-    if extracted_text and ocr_success:
+    if questions and ocr_success:
+        # Build individual structured question chunks
+        for idx, q in enumerate(questions):
+            q_num = q.get("q_num", f"Q{idx + 1}")
+            sec = q.get("section", "")
+            marks = q.get("marks", "")
+            q_body = q.get("text", "")
+            options = q.get("options", [])
+            opt_str = ("\nOptions: " + " | ".join(options)) if options else ""
+            diag_str = f"\n[Diagram/Figure: {q['diagram_description']}]" if q.get("has_diagram") and q.get("diagram_description") else ""
+            sec_header = f"[{sec}] " if sec else ""
+            marks_suffix = f" ({marks})" if marks else ""
+            chunk_body = f"{sec_header}{q_num}: {q_body}{opt_str}{diag_str}{marks_suffix}".strip()
+
+            chunks.append(
+                TextChunk(
+                    text=chunk_body,
+                    page=1,
+                    chunk_index=idx,
+                    doc_id=doc_id,
+                    is_ocr=True,
+                    source=img_path.name,
+                    question_number=q_num,
+                    section=sec,
+                    marks=marks,
+                )
+            )
+
+        # Also add an introductory overview chunk if full text has headers/instructions
+        if len(extracted_text) > 200:
+            chunks.insert(
+                0,
+                TextChunk(
+                    text=extracted_text[:600],
+                    page=1,
+                    chunk_index=len(chunks),
+                    doc_id=doc_id,
+                    is_ocr=True,
+                    source=img_path.name,
+                    question_number="Overview",
+                    section="",
+                    marks="",
+                )
+            )
+
+    elif extracted_text and ocr_success:
+        # Fallback to paragraph/sentence chunker
         chunks = _split_into_structured_chunks(
             text=extracted_text,
             page=1,
@@ -299,11 +594,13 @@ def process_image_to_chunks(
         )
 
     metadata: Dict[str, Any] = {
-        "extraction_method": "ocr",
+        "extraction_method": extraction_method,
         "ocr_success": ocr_success,
         "ocr_confidence": ocr_conf,
         "char_count": len(extracted_text),
         "chunk_count": len(chunks),
+        "question_count": len(questions),
+        "questions": questions,
         "filename": img_path.name,
     }
 

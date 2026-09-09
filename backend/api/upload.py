@@ -152,10 +152,22 @@ async def upload_documents(
 
             # 2. Vector Store Indexing (Qdrant / ChromaDB)
             chunks_indexed = 0
+            detected_questions = [c.question_number for c in chunks if getattr(c, "question_number", None) is not None]
+            questions_count = len(set(detected_questions)) if detected_questions else 0
+
             if chunks:
                 try:
                     texts = [c.text for c in chunks]
                     page_nums = [c.page for c in chunks]
+                    chunk_metadatas = [
+                        {
+                            "question_number": getattr(c, "question_number", None),
+                            "section": getattr(c, "section", None),
+                            "marks": getattr(c, "marks", None),
+                            "is_ocr": getattr(c, "is_ocr", False),
+                        }
+                        for c in chunks
+                    ]
                     embeddings = await asyncio.to_thread(embedder.embed, texts)
                     await asyncio.to_thread(
                         vs.add_chunks,
@@ -165,9 +177,16 @@ async def upload_documents(
                         embeddings=embeddings,
                         pages=page_nums,
                         user_id=user_id,
+                        metadatas=chunk_metadatas,
                     )
                     chunks_indexed = len(chunks)
-                    logger.info("Indexed %d chunks for '%s' into VectorStore (user_id=%s)", chunks_indexed, filename, user_id)
+                    logger.info(
+                        "Indexed %d chunks (%d questions) for '%s' into VectorStore (user_id=%s)",
+                        chunks_indexed,
+                        questions_count,
+                        filename,
+                        user_id,
+                    )
                 except Exception as exc:
                     logger.warning("Vector store indexing failed for %s: %s", filename, exc)
 
@@ -195,6 +214,7 @@ async def upload_documents(
                 size_mb=file_size_mb,
                 pages=pages_count,
                 chunk_count=chunks_indexed,
+                questions_count=questions_count,
                 file_path=str(dest_path),
                 user_id=user_id,
                 sha256=file_hash,
@@ -205,13 +225,15 @@ async def upload_documents(
                 await record_audit_log(
                     current_user.id,
                     LogAction.UPLOAD,
-                    f"Uploaded document: {filename} ({file_size_mb} MB, {pages_count} pages, {chunks_indexed} chunks, {extraction_method})",
+                    f"Uploaded document: {filename} ({file_size_mb} MB, {pages_count} pages, {chunks_indexed} chunks, {questions_count} questions, {extraction_method})",
                 )
 
             # Warning if OCR failed to find readable text
             msg = "Processed and indexed successfully."
             if kind == "image" and not chunks:
                 msg = "Warning: Text could not be reliably detected in this image. Please upload a clearer image."
+            elif questions_count > 0:
+                msg = f"Processed successfully: detected {questions_count} question(s)."
 
             return {
                 "id": doc_id,
@@ -222,6 +244,7 @@ async def upload_documents(
                 "pages": pages_count,
                 "chunk_count": chunks_indexed,
                 "chunks_indexed": chunks_indexed,
+                "questions_count": questions_count,
                 "paperqa_indexed": pqa_indexed,
                 "extraction_method": extraction_method,
                 "ocr_success": ocr_success if kind == "image" else True,

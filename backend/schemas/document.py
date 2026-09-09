@@ -18,6 +18,7 @@ class UploadedDoc(BaseModel):
     size_mb: float = 0.0
     pages: int = 1
     chunk_count: int = 0
+    questions_count: int = 0
     file_path: str = ""
     user_id: Optional[str] = None
     sha256: Optional[str] = None
@@ -40,6 +41,7 @@ class DocumentResponse(BaseModel):
     size_mb: float
     pages: int
     chunk_count: int
+    questions_count: int = 0
     uploaded_at: str
 
 

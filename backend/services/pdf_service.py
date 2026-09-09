@@ -29,6 +29,9 @@ class TextChunk:
     doc_id: str
     is_ocr: bool = False
     source: str = "document"
+    question_number: Optional[str] = None
+    section: Optional[str] = None
+    marks: Optional[str] = None
 
 
 def count_pdf_pages(file_path: str) -> int:
@@ -95,6 +98,20 @@ def _split_into_structured_chunks(
             return
         chunk_body = " ".join(words_list).strip()
         if chunk_body:
+            q_num = None
+            section = None
+            marks = None
+
+            q_match = re.search(r"\b(?:(Q\s*[0-9]+[a-z]?)|(Question\s*[0-9]+[a-z]?)|([0-9]+[\.\)]))\b", chunk_body, re.IGNORECASE)
+            if q_match:
+                q_num = q_match.group(0).strip()
+            sec_match = re.search(r"\b(SECTION\s+[A-Z]|PART\s+[A-Z0-9]+)\b", chunk_body, re.IGNORECASE)
+            if sec_match:
+                section = sec_match.group(0).strip()
+            marks_match = re.search(r"\[?\(?(\d+\s*(?:marks?|pts?|points?|m))\)?\]?", chunk_body, re.IGNORECASE)
+            if marks_match:
+                marks = marks_match.group(1).strip()
+
             chunks.append(
                 TextChunk(
                     text=chunk_body,
@@ -103,6 +120,9 @@ def _split_into_structured_chunks(
                     doc_id=doc_id,
                     is_ocr=is_ocr,
                     source=source,
+                    question_number=q_num,
+                    section=section,
+                    marks=marks,
                 )
             )
             chunk_idx += 1
@@ -112,10 +132,15 @@ def _split_into_structured_chunks(
         if not block_words:
             continue
 
+        # If this block starts a new question and we already have accumulated content, flush first
+        is_new_question = bool(re.match(r"^(?:(?:Q|Question)\s*[0-9]+|[0-9]+[\.\)])", block.strip(), re.IGNORECASE))
+        if is_new_question and len(current_block_words) >= 40:
+            _flush_current(current_block_words)
+            current_block_words = []
+
         # If adding this block exceeds target chunk_size (in words)
         if len(current_block_words) + len(block_words) > chunk_size and len(current_block_words) > 0:
             _flush_current(current_block_words)
-            # Create overlap from end of previous chunk
             overlap_words = current_block_words[-overlap:] if overlap > 0 and len(current_block_words) > overlap else []
             current_block_words = list(overlap_words)
 
@@ -187,29 +212,26 @@ def extract_chunks(
                 page_text = digital_text
                 is_ocr_page = False
 
-                # B. Trigger OCR if page is scanned or image-heavy
+                # B. Trigger OCR / Vision if page is scanned or image-heavy
                 if is_scanned_page or is_image_heavy:
                     try:
-                        from services.image_service import extract_text_with_confidence, is_tesseract_available
-                        if is_tesseract_available():
-                            # Render PDF page to high-res pixmap (200 DPI)
-                            zoom = 200.0 / 72.0
-                            matrix = fitz.Matrix(zoom, zoom)
-                            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+                        zoom = 200.0 / 72.0
+                        matrix = fitz.Matrix(zoom, zoom)
+                        pixmap = page.get_pixmap(matrix=matrix, alpha=False)
 
-                            from PIL import Image
-                            page_pil_img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
+                        from PIL import Image
+                        page_pil_img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
 
-                            ocr_text, conf, success = extract_text_with_confidence(page_pil_img, lang=lang)
+                        from services.image_service import extract_text_hybrid
+                        ocr_text, conf, success = extract_text_hybrid(page_pil_img, lang=lang)
 
-                            if success and len(ocr_text.strip()) > 10:
-                                if digital_text:
-                                    # Mixed page: combine digital + OCR
-                                    page_text = f"{digital_text}\n\n[Scanned / Image Content (Page {page_idx})]:\n{ocr_text}"
-                                else:
-                                    page_text = ocr_text
-                                is_ocr_page = True
-                                logger.info("PDF Page %d: OCR extracted %d chars (conf: %.1f%%)", page_idx, len(ocr_text), conf)
+                        if success and len(ocr_text.strip()) > 10:
+                            if digital_text:
+                                page_text = f"{digital_text}\n\n[Scanned / Image Content (Page {page_idx})]:\n{ocr_text}"
+                            else:
+                                page_text = ocr_text
+                            is_ocr_page = True
+                            logger.info("PDF Page %d: Hybrid OCR/Vision extracted %d chars (conf: %.1f%%)", page_idx, len(ocr_text), conf)
                     except Exception as ocr_page_err:
                         logger.debug("PDF Page %d OCR attempt failed: %s", page_idx, ocr_page_err)
 

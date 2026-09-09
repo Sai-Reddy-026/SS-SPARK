@@ -93,12 +93,14 @@ class VectorStore:
         embeddings: List[List[float]],
         pages: List[int],
         user_id: Optional[str] = None,
+        metadatas: Optional[List[Dict[str, Any]]] = None,
     ) -> List[str]:
-        """Store chunk vectors along with metadata."""
+        """Store chunk vectors along with rich question and layout metadata."""
         if not chunks:
             return []
 
         ids = [f"{doc_id}_{i}_{uuid.uuid4().hex[:8]}" for i in range(len(chunks))]
+        meta_list = metadatas or [{}] * len(chunks)
 
         # 1. Qdrant
         if self.qdrant_client is not None:
@@ -115,9 +117,12 @@ class VectorStore:
                             "page": page,
                             "text": text,
                             "user_id": user_id or "",
+                            "question_number": m.get("question_number", ""),
+                            "section": m.get("section", ""),
+                            "marks": m.get("marks", ""),
                         },
                     )
-                    for cid, text, emb, page in zip(ids, chunks, embeddings, pages)
+                    for cid, text, emb, page, m in zip(ids, chunks, embeddings, pages, meta_list)
                 ]
                 self.qdrant_client.upsert(collection_name=self.collection_name, points=points)
                 return ids
@@ -127,27 +132,30 @@ class VectorStore:
         # 2. ChromaDB
         if self.chroma_collection is not None:
             try:
-                metadatas = [
+                chroma_metas = [
                     {
                         "doc_id": doc_id,
                         "source": source_name,
                         "page": page,
                         "user_id": user_id or "",
+                        "question_number": m.get("question_number", "") or "",
+                        "section": m.get("section", "") or "",
+                        "marks": m.get("marks", "") or "",
                     }
-                    for page in pages
+                    for page, m in zip(pages, meta_list)
                 ]
                 self.chroma_collection.add(
                     ids=ids,
                     documents=chunks,
                     embeddings=embeddings,
-                    metadatas=metadatas,
+                    metadatas=chroma_metas,
                 )
                 return ids
             except Exception as exc:
                 logger.warning("ChromaDB upsert failed (%s), writing to memory.", exc)
 
         # 3. In-memory
-        for cid, text, emb, page in zip(ids, chunks, embeddings, pages):
+        for cid, text, emb, page, m in zip(ids, chunks, embeddings, pages, meta_list):
             self._mem_chunks.append({
                 "id": cid,
                 "doc_id": doc_id,
@@ -156,6 +164,9 @@ class VectorStore:
                 "embedding": emb,
                 "page": page,
                 "user_id": user_id,
+                "question_number": m.get("question_number", ""),
+                "section": m.get("section", ""),
+                "marks": m.get("marks", ""),
             })
         return ids
 
@@ -191,6 +202,9 @@ class VectorStore:
                         "source": payload.get("source_name", "document"),
                         "page": payload.get("page", 1),
                         "text": payload.get("text", ""),
+                        "question_number": payload.get("question_number", ""),
+                        "section": payload.get("section", ""),
+                        "marks": payload.get("marks", ""),
                         "relevance": round(float(h.score), 3),
                     })
                 return results
@@ -219,6 +233,9 @@ class VectorStore:
                             "source": meta.get("source", "document"),
                             "page": meta.get("page", 1),
                             "text": text,
+                            "question_number": meta.get("question_number", ""),
+                            "section": meta.get("section", ""),
+                            "marks": meta.get("marks", ""),
                             "relevance": round(float(relevance), 3),
                         })
                 return results
@@ -248,6 +265,9 @@ class VectorStore:
                 "source": c["source"],
                 "page": c["page"],
                 "text": c["text"],
+                "question_number": c.get("question_number", ""),
+                "section": c.get("section", ""),
+                "marks": c.get("marks", ""),
                 "relevance": round(float(score), 3),
             })
         return results

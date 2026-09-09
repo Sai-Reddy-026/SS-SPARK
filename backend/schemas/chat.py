@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -33,6 +33,7 @@ class ChatMessage(BaseModel):
     citations: List[CitationItem] = Field(default_factory=list)
     references: str = ""
     status: str = "success"  # "success" | "partial" | "unsure" | "general" | "error"
+    attachment: Optional[Dict[str, Any]] = None  # { name, type, size, preview_url, data_url }
     created_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -73,6 +74,8 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     doc_id: Optional[str] = None
     stream: bool = False
+    attachment: Optional[Dict[str, Any]] = None
+    image_data: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

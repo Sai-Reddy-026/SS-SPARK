@@ -59,9 +59,7 @@ def _check_chat_rate_limit(client_ip: str) -> tuple[bool, int]:
     return True, 0
 
 
-class ChatRequest(BaseModel):
-    question: str
-    session_id: Optional[str] = None
+from schemas.chat import ChatRequest
 
 
 @router.post("/api/chat")
@@ -74,6 +72,7 @@ async def chat_endpoint(
     """
     Submit a question for AI answering with rate limiting (RAT-01).
     Automatically routes between PaperQA RAG and general conversational AI.
+    Supports direct question paper image attachments and question paper intelligence.
     """
     client_ip = request.client.host if request.client else "unknown"
     allowed, retry_after = _check_chat_rate_limit(client_ip)
@@ -90,6 +89,8 @@ async def chat_endpoint(
         )
 
     user_id = current_user.id if current_user else None
+    attachment_data = req.attachment
+    image_data = req.image_data or (attachment_data.get("data_url") if attachment_data else None)
 
     if stream:
         # ── Streaming path ────────────────────────────────────────────────
@@ -99,6 +100,9 @@ async def chat_endpoint(
                     question=req.question.strip(),
                     session_id=req.session_id,
                     user_id=user_id,
+                    attachment=attachment_data,
+                    doc_id=req.doc_id,
+                    image_data=image_data,
                 ):
                     yield chunk
             except asyncio.CancelledError:
@@ -125,6 +129,9 @@ async def chat_endpoint(
         question=req.question.strip(),
         session_id=req.session_id,
         user_id=user_id,
+        attachment=attachment_data,
+        doc_id=req.doc_id,
+        image_data=image_data,
     )
     return result
 
@@ -146,6 +153,7 @@ async def history_endpoint(
             "content": m.content,
             "created_at": m.created_at,
             "confidence": m.confidence,
+            "attachment": getattr(m, "attachment", None),
             "citations": [
                 {
                     "id": c.id,

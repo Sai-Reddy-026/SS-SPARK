@@ -1,12 +1,58 @@
 import { memo, useState, Fragment } from "react";
 import { Check, Copy } from "lucide-react";
 import { toast } from "sonner";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 
-/** Minimal markdown renderer for headings, lists, bold/italic, inline & fenced code. */
+/** Markdown renderer for headings, lists, bold/italic, inline & fenced code, and LaTeX math formulas. */
 function renderInline(text: string, keyPrefix: string) {
-  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
+  // Matches $$display math$$, $inline math$, `code`, **bold**, *italic*
+  const tokens = text.split(/(\$\$[^\$]+\$\$|\$[^\$]+\$|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
   return tokens.map((token, i) => {
     const key = `${keyPrefix}-${i}`;
+
+    // Display math $$...$$
+    if (token.startsWith("$$") && token.endsWith("$$") && token.length > 4) {
+      const math = token.slice(2, -2).trim();
+      try {
+        const html = katex.renderToString(math, { displayMode: true, throwOnError: false });
+        return (
+          <div
+            key={key}
+            className="my-2.5 overflow-x-auto text-center"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        );
+      } catch {
+        return (
+          <code key={key} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.85em]">
+            {token}
+          </code>
+        );
+      }
+    }
+
+    // Inline math $...$
+    if (token.startsWith("$") && token.endsWith("$") && token.length > 2) {
+      const math = token.slice(1, -1).trim();
+      try {
+        const html = katex.renderToString(math, { displayMode: false, throwOnError: false });
+        return (
+          <span
+            key={key}
+            className="inline-math mx-0.5"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        );
+      } catch {
+        return (
+          <code key={key} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[0.85em]">
+            {token}
+          </code>
+        );
+      }
+    }
+
     if (token.startsWith("`") && token.endsWith("`")) {
       return (
         <code
@@ -33,17 +79,32 @@ function renderInline(text: string, keyPrefix: string) {
 
 const CodeBlock = memo(function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
+  const isLatex = lang.toLowerCase() === "latex" || lang.toLowerCase() === "math";
+
+  let mathHtml = "";
+  if (isLatex) {
+    try {
+      mathHtml = katex.renderToString(code, { displayMode: true, throwOnError: false });
+    } catch {
+      mathHtml = "";
+    }
+  }
 
   function handleCopy() {
     void navigator.clipboard?.writeText(code).then(() => {
       setCopied(true);
-      toast.success("Code copied!");
+      toast.success("Copied to clipboard!");
       setTimeout(() => setCopied(false), 2000);
     });
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border bg-muted/40 my-1">
+    <div className="overflow-hidden rounded-xl border bg-muted/40 my-2">
+      {mathHtml ? (
+        <div className="p-3 bg-card/60 overflow-x-auto text-center border-b border-border/30">
+          <div dangerouslySetInnerHTML={{ __html: mathHtml }} />
+        </div>
+      ) : null}
       <div className="flex items-center justify-between border-b bg-muted/60 px-3 py-1.5">
         <span className="font-mono text-xs text-muted-foreground">{lang || "code"}</span>
         <button

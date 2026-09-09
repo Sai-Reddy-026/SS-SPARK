@@ -187,7 +187,15 @@ export const documentsApi = {
 // SSE streaming types
 // -------------------------------------------------------------------------- //
 
-export type StreamPhase = "routing" | "retrieving" | "generating";
+export type StreamPhase = "routing" | "retrieving" | "generating" | "reading_paper" | "locating_question";
+
+export interface ChatAttachmentPayload {
+  name: string;
+  type: string;
+  size: number;
+  data_url: string;
+  preview_url?: string;
+}
 
 export interface StreamCallbacks {
   onSession?: (sessionId: string) => void;
@@ -218,10 +226,20 @@ export interface StreamMeta {
 
 export const chatApi = {
   /** Non-streaming legacy JSON send. */
-  send: (question: string, sessionId?: string) =>
+  send: (
+    question: string,
+    sessionId?: string,
+    attachment?: ChatAttachmentPayload,
+    docId?: string,
+  ) =>
     apiFetch<ChatApiResponse>("/api/chat?stream=false", {
       method: "POST",
-      body: JSON.stringify({ question, session_id: sessionId }),
+      body: JSON.stringify({
+        question,
+        session_id: sessionId,
+        attachment,
+        doc_id: docId,
+      }),
     }),
 
   /** Streaming SSE send. Reads the SSE stream and calls back as events arrive.
@@ -230,6 +248,8 @@ export const chatApi = {
     question: string,
     sessionId: string | undefined,
     callbacks: StreamCallbacks,
+    attachment?: ChatAttachmentPayload,
+    docId?: string,
   ): AbortController => {
     const controller = new AbortController();
     let doneCalled = false;
@@ -283,7 +303,12 @@ export const chatApi = {
         response = await fetch(`${API_BASE}/api/chat?stream=true`, {
           method: "POST",
           headers,
-          body: JSON.stringify({ question, session_id: sessionId }),
+          body: JSON.stringify({
+            question,
+            session_id: sessionId,
+            attachment,
+            doc_id: docId,
+          }),
           signal: controller.signal,
         });
       } catch (err) {
@@ -442,6 +467,7 @@ export interface DocumentResponse {
   size_mb: number;
   pages: number;
   chunk_count: number;
+  questions_count?: number;
   uploaded_at: string;
   user_id?: string;
 }
@@ -455,6 +481,7 @@ export interface UploadResponse {
   pages: number;
   chunk_count?: number;
   chunks_indexed: number;
+  questions_count?: number;
   paperqa_indexed: boolean;
   uploaded_at: string;
   message: string;

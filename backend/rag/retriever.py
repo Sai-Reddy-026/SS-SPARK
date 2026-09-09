@@ -26,6 +26,9 @@ class RetrievedChunk(BaseModel):
     text: str = ""
     relevance: float = 0.0
     is_ocr: bool = False
+    question_number: str = ""
+    section: str = ""
+    marks: str = ""
 
     def __getitem__(self, item: str) -> Any:
         return getattr(self, item)
@@ -163,6 +166,9 @@ async def retrieve(
                 text=h.get("text", ""),
                 relevance=float(h.get("relevance", 0.0)),
                 is_ocr=bool(h.get("is_ocr", False)),
+                question_number=h.get("question_number", "") or "",
+                section=h.get("section", "") or "",
+                marks=h.get("marks", "") or "",
             )
             for h in hits
         ]

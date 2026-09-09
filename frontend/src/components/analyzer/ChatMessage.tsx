@@ -6,6 +6,8 @@ import {
   ChevronDown,
   Clock,
   Copy,
+  FileText,
+  ImageIcon,
   RefreshCw,
   ThumbsDown,
   ThumbsUp,
@@ -35,7 +37,31 @@ export const ChatMessage = memo(function ChatMessage({
   if (isUser) {
     return (
       <div className="animate-message-in flex justify-end px-2 sm:px-4">
-        <div className="flex max-w-[80%] flex-col items-end gap-1 sm:max-w-[65%]">
+        <div className="flex max-w-[80%] flex-col items-end gap-1.5 sm:max-w-[65%]">
+          {message.attachment && (
+            <div className="overflow-hidden rounded-2xl border border-border/40 bg-card/60 p-1.5 shadow-sm backdrop-blur-md">
+              {message.attachment.type?.startsWith("image/") || message.attachment.previewUrl ? (
+                <div className="group relative max-h-56 max-w-xs overflow-hidden rounded-xl border border-border/40 bg-muted">
+                  <img
+                    src={message.attachment.previewUrl || message.attachment.dataUrl}
+                    alt={message.attachment.name}
+                    className="h-auto max-h-52 w-full object-cover transition-transform group-hover:scale-105"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 text-left">
+                    <p className="truncate text-xs font-medium text-white">{message.attachment.name}</p>
+                    <p className="text-[10px] text-white/70">
+                      {(message.attachment.size / (1024 * 1024)).toFixed(2)} MB
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs">
+                  <FileText className="h-4 w-4 text-primary" />
+                  <span className="max-w-[180px] truncate font-medium">{message.attachment.name}</span>
+                </div>
+              )}
+            </div>
+          )}
           <div className="user-bubble rounded-3xl rounded-br-md px-4 py-3 text-[0.95rem] leading-relaxed text-foreground shadow-sm">
             {message.content}
           </div>
@@ -237,8 +263,10 @@ function ActionButton({
 const PHASE_LABELS: Record<string, string> = {
   thinking: "Thinking",
   routing: "Routing request",
-  retrieving: "Retrieving documents",
-  generating: "Generating response",
+  reading_paper: "Reading question paper & inspecting diagrams",
+  locating_question: "Locating question in paper",
+  retrieving: "Retrieving exam material",
+  generating: "Generating step-by-step solution",
 };
 
 // ─── Typing Indicator — shows current phase ───

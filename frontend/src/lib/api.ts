@@ -13,6 +13,15 @@ import { getStoredAccessToken, getStoredRefreshToken, isTokenExpired, clearStore
 
 export const API_BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
+// Silent backend warmup: pings /health on app launch to preemptively wake Render free-tier instances
+if (typeof window !== "undefined") {
+  try {
+    fetch(`${API_BASE}/health`, { method: "GET" }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
 type FetchOptions = RequestInit & {
   skipAuth?: boolean;
 };
@@ -64,28 +73,39 @@ export async function apiFetch<T = unknown>(
     }
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...rest,
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders,
-        ...(headers as Record<string, string>),
-      },
-    });
-  } catch (netErr: unknown) {
-    throw new Error(
-      `Cannot connect to backend server at ${API_BASE}. Please ensure the FastAPI server is running.`
-    );
+  let response: Response | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        ...rest,
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+          ...(headers as Record<string, string>),
+        },
+      });
+      if (attempt === 1 && (response.status === 502 || response.status === 503 || response.status === 504)) {
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+      break;
+    } catch (netErr: unknown) {
+      if (attempt === 1) {
+        await new Promise((r) => setTimeout(r, 2500));
+        continue;
+      }
+      throw new Error(
+        `Cannot connect to backend server at ${API_BASE}. Please ensure the server is running (if on free hosting, it may be waking up).`
+      );
+    }
   }
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
+  if (!response || !response.ok) {
+    const errorData = response ? await response.json().catch(() => ({})) : {};
     const message =
       (errorData as { detail?: string; message?: string }).detail ??
       (errorData as { detail?: string; message?: string }).message ??
-      `HTTP ${response.status}`;
+      (response ? `HTTP ${response.status}` : "Connection failed");
     throw new Error(message);
   }
 
@@ -260,8 +280,8 @@ export const chatApi = {
       }
     };
 
-    // Client-side inactivity watchdog: aborts if no chunk is received for 35 seconds
-    const INACTIVITY_TIMEOUT_MS = 35000;
+    // Client-side inactivity watchdog: 90 seconds to allow Render free-tier cold starts (~50s)
+    const INACTIVITY_TIMEOUT_MS = 90000;
     let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
     const resetWatchdog = () => {
@@ -298,32 +318,50 @@ export const chatApi = {
 
       resetWatchdog();
 
-      let response: Response;
-      try {
-        response = await fetch(`${API_BASE}/api/chat?stream=true`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            question,
-            session_id: sessionId,
-            attachment,
-            doc_id: docId,
-          }),
-          signal: controller.signal,
-        });
-      } catch (err) {
-        clearWatchdog();
-        if ((err as Error)?.name === "AbortError") return;
-        callbacks.onError?.(
-          `Cannot connect to backend at ${API_BASE}. Is the server running?`,
-        );
-        triggerDone();
-        return;
+      let response: Response | null = null;
+      // Attempt connection with 1 retry for cold-start absorption
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          response = await fetch(`${API_BASE}/api/chat?stream=true`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              question,
+              session_id: sessionId,
+              attachment,
+              doc_id: docId,
+            }),
+            signal: controller.signal,
+          });
+
+          // If Render free-tier container is waking up (502/503/504 gateway response), wait and retry once
+          if (attempt === 1 && (response.status === 502 || response.status === 503 || response.status === 504)) {
+            await new Promise((r) => setTimeout(r, 4000));
+            continue;
+          }
+          break;
+        } catch (err) {
+          if ((err as Error)?.name === "AbortError") {
+            clearWatchdog();
+            return;
+          }
+          if (attempt === 1) {
+            // Free-tier container may be cold; pause 3s and retry once
+            await new Promise((r) => setTimeout(r, 3000));
+            continue;
+          }
+        }
       }
 
-      if (!response.ok) {
+      if (!response || !response.ok) {
         clearWatchdog();
-        callbacks.onError?.(`Server error: HTTP ${response.status}`);
+        if (!response) {
+          callbacks.onError?.(
+            `Cannot connect to backend at ${API_BASE}. If using Render free tier, the server may take ~50s to wake from sleep. Please try again shortly.`,
+          );
+        } else {
+          callbacks.onError?.(`Server error: HTTP ${response.status}`);
+        }
         triggerDone();
         return;
       }

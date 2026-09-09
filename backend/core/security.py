@@ -218,6 +218,8 @@ async def get_current_admin(
 
 def get_cors_origins(settings: Settings) -> List[str]:
     """Return deduplicated list of allowed CORS origins, including FRONTEND_URL."""
+    if "*" in settings.ALLOWED_ORIGINS:
+        return ["*"]
     origins = set(settings.ALLOWED_ORIGINS)
     if settings.FRONTEND_URL:
         origins.add(settings.FRONTEND_URL.rstrip("/"))
@@ -226,9 +228,11 @@ def get_cors_origins(settings: Settings) -> List[str]:
         "http://localhost:8080",
         "http://localhost:5173",
         "http://localhost:3000",
+        "http://localhost:4173",
         "http://127.0.0.1:8080",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:4173",
     ])
     return list(origins)
 

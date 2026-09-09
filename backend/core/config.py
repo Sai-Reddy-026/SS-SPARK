@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -165,9 +165,27 @@ class Settings(BaseSettings):
             "http://localhost:3000",
             "http://localhost:5173",
             "http://127.0.0.1:3000",
+            "https://ss-spark.onrender.com",
+            "https://ss-spark.vercel.app",
         ],
-        description="CORS-allowed origins",
+        description="CORS-allowed origins. Supports comma-separated string, JSON array, or '*' wildcard.",
     )
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v):
+        if isinstance(v, str):
+            v_str = v.strip()
+            if not v_str or v_str == "*":
+                return ["*"]
+            if v_str.startswith("[") and v_str.endswith("]"):
+                try:
+                    import json
+                    return json.loads(v_str)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v_str.split(",") if origin.strip()]
+        return v
     CHAT_RATE_LIMIT_PER_MINUTE: int = Field(default=30, description="Max chat requests per minute per client IP")
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)

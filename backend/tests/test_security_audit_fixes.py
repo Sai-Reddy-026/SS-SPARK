@@ -298,10 +298,13 @@ def test_sec03_cors_origin_policy():
     regex_pattern = getattr(cors, "kwargs", {}).get("allow_origin_regex") or getattr(cors, "options", {}).get("allow_origin_regex")
     assert regex_pattern is not None
 
-    # Test allowed patterns
+    # Test allowed patterns (Vercel, Render, Cloudflare Pages, Lovable)
     assert re.match(regex_pattern, "https://ss-spark.vercel.app")
     assert re.match(regex_pattern, "https://ss-spark-git-main-user.vercel.app")
     assert re.match(regex_pattern, "https://preview.ss-spark.vercel.app")
+    assert re.match(regex_pattern, "https://ss-spark.onrender.com")
+    assert re.match(regex_pattern, "https://ssspark.pages.dev")
+    assert re.match(regex_pattern, "https://ss-spark.lovableproject.com")
 
     # Test rejected patterns (SEC-03 Fix)
     assert not re.match(regex_pattern, "https://malicious-site.vercel.app")

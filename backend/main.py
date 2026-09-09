@@ -195,11 +195,21 @@ from core.config import get_settings as _get_settings
 from core.security import get_cors_origins
 
 _cfg = _get_settings()
+_cors_origins = get_cors_origins(_cfg)
+_has_wildcard = "*" in _cors_origins or "*" in _cfg.ALLOWED_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_cors_origins(_cfg),
-    # SEC-03 FIX: Tightened from wildcard to SS-SPARK preview and production domains
-    allow_origin_regex=r"^https:\/\/(?:[a-zA-Z0-9_-]+\.)?(?:ss-spark|ssspark)(?:-[a-zA-Z0-9_-]+)?\.vercel\.app$",
+    allow_origins=_cors_origins if not _has_wildcard else ["*"],
+    # Dynamic CORS origin regex:
+    # 1. If wildcard '*' is in ALLOWED_ORIGINS, allow all origins dynamically with credentials
+    # 2. Otherwise, allow any localhost/127.0.0.1 port, plus official SS-SPARK preview and production domains
+    #    across Vercel, Render, Cloudflare Pages, Netlify, Lovable, GitHub Pages
+    allow_origin_regex=(
+        r".*"
+        if _has_wildcard
+        else r"^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$|^https:\/\/(?:[a-zA-Z0-9_\-]+\.)*(?:ss-spark|ssspark)(?:-[a-zA-Z0-9_\-]+)?\.(?:vercel\.app|onrender\.com|pages\.dev|netlify\.app|lovableproject\.com|lovable\.app)$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

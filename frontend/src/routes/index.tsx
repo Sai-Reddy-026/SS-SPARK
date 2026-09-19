@@ -26,6 +26,7 @@ import {
   type StreamMeta,
 } from "@/lib/api";
 import { BookOpen, BrainCircuit, Code2, FileText, Sparkles, Zap } from "lucide-react";
+import { Atmosphere, ParticleField, SparkCore, GlassCard } from "@/components/astra";
 
 // Code-split heavy chart and modal dependencies
 const AnalyzerPanel = lazy(() => import("@/components/analyzer/AnalyzerPanel"));
@@ -81,6 +82,19 @@ function AnalyzerPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [mousePos, setMousePos] = useState({ x: 0.5, y: 0.5 });
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    setMousePos({
+      x: e.clientX / window.innerWidth,
+      y: e.clientY / window.innerHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
+    return () => window.removeEventListener("mousemove", handleMouseMove);
+  }, [handleMouseMove]);
 
   const [docs, setDocs] = useState<UploadedDoc[]>([]);
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
@@ -599,7 +613,11 @@ function AnalyzerPage() {
   const hasMessages = messages.length > 0;
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="relative flex h-screen w-full overflow-hidden bg-background">
+      {/* Astra Cosmic Atmosphere & Particles — Shared visual world */}
+      <Atmosphere mouseX={mousePos.x} mouseY={mousePos.y} showGrid={false} intensity="subtle" />
+      <ParticleField mouseX={mousePos.x} mouseY={mousePos.y} density="low" />
+
       {/* ── Left sidebar ── */}
       <AnalyzerSidebar
         open={sidebarOpen}
@@ -639,43 +657,39 @@ function AnalyzerPage() {
 
         {/* ── Scrollable chat area ── */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
-          {/* ── Empty / Welcome state — Premium AI ── */}
+          {/* ── Empty / Welcome state — Astra 3D Cinematic Core ── */}
           {!hasMessages && !loading && (
-            <div className="flex h-full flex-col items-center justify-center px-4 py-16 text-center">
-              {/* Animated brand orb */}
-              <div className="animate-scale-in relative mb-8">
-                <span className="absolute -inset-6 -z-10 rounded-full blur-[60px] gradient-brand opacity-25 animate-pulse-glow" />
-                <span className="grid h-[72px] w-[72px] place-items-center rounded-[22px] gradient-brand shadow-xl shadow-primary/25 animate-float">
-                  <BrainCircuit className="h-9 w-9 text-white drop-shadow-sm" />
-                </span>
+            <div className="flex h-full flex-col items-center justify-center px-4 py-12 text-center select-none">
+              {/* Central Floating 3D Spark Core */}
+              <div className="animate-scale-in relative mb-5">
+                <SparkCore mouseX={mousePos.x} mouseY={mousePos.y} variant="ambient" showBadges={false} />
               </div>
 
               {/* Headline with shimmer */}
-              <h1 className="animate-fade-up text-3xl font-extrabold tracking-tight sm:text-5xl" style={{ animationDelay: '80ms' }}>
-                <span className="text-shine">What can I help with?</span>
+              <h1 className="animate-fade-up text-3xl font-extrabold tracking-tight sm:text-4xl text-white font-display" style={{ animationDelay: '80ms' }}>
+                What would you like to <span className="gradient-text">explore</span>?
               </h1>
-              <p className="animate-fade-up mx-auto mt-4 max-w-lg text-[0.95rem] leading-relaxed text-muted-foreground" style={{ animationDelay: '160ms' }}>
-                Ask me anything — general knowledge, coding problems, or questions about your
-                uploaded documents. Answers grounded in your files include citations and page
-                numbers.
+              <p className="animate-fade-up mx-auto mt-2.5 max-w-md text-xs sm:text-sm leading-relaxed text-slate-400" style={{ animationDelay: '160ms' }}>
+                Step-by-step solutions, exam pattern predictions, and formulas verified strictly against your uploaded documents.
               </p>
 
-              {/* Suggested prompts with stagger animation */}
-              <div className="stagger-children mt-10 grid w-full max-w-xl gap-2.5 sm:grid-cols-2">
+              {/* Suggested prompts with GlassCard */}
+              <div className="stagger-children mt-7 grid w-full max-w-xl gap-3 sm:grid-cols-2">
                 {SUGGESTED_PROMPTS.map(({ text, icon: PromptIcon }) => (
-                  <button
+                  <GlassCard
                     key={text}
+                    variant="interactive"
                     onClick={() => {
                       setInput(text);
                       setTimeout(() => sendMessage(text), 50);
                     }}
-                    className="group flex items-start gap-3 rounded-2xl border border-border/50 bg-card/50 px-4 py-3.5 text-left text-sm text-muted-foreground backdrop-blur-sm transition-all duration-200 hover:border-primary/40 hover:bg-accent/80 hover:text-foreground hover-glow"
+                    className="p-3.5 flex items-start gap-3 text-left"
                   >
-                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/20">
+                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-sky-500/15 text-sky-400 border border-sky-400/25">
                       <PromptIcon className="h-3.5 w-3.5" />
                     </span>
-                    <span className="leading-snug">{text}</span>
-                  </button>
+                    <span className="text-xs text-slate-300 leading-snug font-medium">{text}</span>
+                  </GlassCard>
                 ))}
               </div>
 
@@ -683,14 +697,14 @@ function AnalyzerPage() {
               {docs.length > 0 && (
                 <button
                   onClick={() => setSearchPadOpen(true)}
-                  className="animate-fade-up mt-8 flex items-center gap-2 rounded-full border border-border/40 bg-card/40 px-4 py-2 text-xs text-muted-foreground backdrop-blur-sm transition-all hover:border-primary/40 hover:text-foreground hover-glow cursor-pointer"
+                  className="animate-fade-up mt-6 flex items-center gap-2 rounded-full border border-sky-400/25 bg-sky-950/40 px-4 py-1.5 text-xs text-sky-200 backdrop-blur-md transition-all hover:border-sky-400/50 hover:shadow-[0_0_15px_rgba(56,189,248,0.15)] cursor-pointer"
                   style={{ animationDelay: '400ms' }}
                 >
                   <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-chart-1 opacity-50" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-chart-1" />
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-400" />
                   </span>
-                  {docs.length} document{docs.length !== 1 ? "s" : ""} loaded · Open Search Pad
+                  <span className="font-mono text-[11px]">{docs.length} source{docs.length !== 1 ? "s" : ""} loaded · Open Search Pad</span>
                 </button>
               )}
             </div>

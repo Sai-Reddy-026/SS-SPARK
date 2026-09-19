@@ -3,11 +3,12 @@ import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { Loader2 } from "lucide-react";
+import { Atmosphere } from "@/components/astra";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
     meta: [
-      { title: "Admin Dashboard | SS SPARK" },
+      { title: "Admin Console | SS SPARK" },
       { name: "robots", content: "noindex" },
     ],
   }),
@@ -31,7 +32,7 @@ function AdminLayout() {
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-sky-400" />
       </div>
     );
   }
@@ -39,12 +40,15 @@ function AdminLayout() {
   if (!isAuthenticated || !isAdmin) return null;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <AdminSidebar currentPath={location.pathname} />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <main className="flex-1 overflow-y-auto">
-          <Outlet />
-        </main>
+    <div className="relative flex h-screen overflow-hidden bg-background">
+      <Atmosphere showGrid={false} intensity="ambient" />
+      <div className="relative z-10 flex h-full w-full overflow-hidden">
+        <AdminSidebar currentPath={location.pathname} />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <main className="flex-1 overflow-y-auto">
+            <Outlet />
+          </main>
+        </div>
       </div>
     </div>
   );

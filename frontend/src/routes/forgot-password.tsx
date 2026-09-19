@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, Loader2, Mail, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Mail, RefreshCw } from "lucide-react";
 import { authApi } from "@/lib/api";
+import { Atmosphere, SparkCore, GlassCard } from "@/components/astra";
 
 export const Route = createFileRoute("/forgot-password")({
   head: () => ({
@@ -87,77 +88,60 @@ function ForgotPasswordPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4 sm:px-6 py-12 relative overflow-hidden">
-      {/* Background ambient orbs */}
-      <div className="absolute top-1/4 left-1/3 w-96 h-96 rounded-full bg-primary/10 blur-[130px] pointer-events-none animate-pulse-glow" />
-      <div className="absolute bottom-1/4 right-1/3 w-80 h-80 rounded-full bg-chart-1/10 blur-[120px] pointer-events-none animate-pulse-glow" style={{ animationDelay: "2s" }} />
+    <div className="relative min-h-screen flex items-center justify-center bg-background px-4 sm:px-6 py-12 overflow-hidden">
+      <Atmosphere showGrid={false} intensity="subtle" />
 
       <div className="w-full max-w-md relative z-10">
         {/* Brand Icon */}
-        <div className="flex justify-center mb-8">
-          <div className="relative">
-            <span className="absolute -inset-2 rounded-3xl bg-primary/30 blur-xl animate-pulse-glow" />
-            <div className="relative p-3.5 rounded-2xl gradient-brand shadow-xl shadow-primary/25 animate-float">
-              <Sparkles className="h-8 w-8 text-brand-foreground" />
-            </div>
-          </div>
+        <div className="flex justify-center mb-6">
+          <SparkCore variant="compact" />
         </div>
 
         {sent ? (
           /* ── Confirmation / Resend View ── */
-          <div className="rounded-3xl border border-border/70 bg-card/70 p-6 sm:p-8 shadow-2xl backdrop-blur-xl text-center animate-message-in">
-            <div className="flex justify-center mb-5">
-              <div
-                className="p-4 rounded-full"
-                style={{
-                  background: "oklch(0.72 0.16 158 / 15%)",
-                  border: "1px solid oklch(0.72 0.16 158 / 30%)",
-                }}
-              >
-                <Mail className="h-8 w-8 text-emerald-400" />
+          <GlassCard variant="elevated" className="p-7 sm:p-9 text-center animate-message-in">
+            <div className="flex justify-center mb-4">
+              <div className="p-3.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                <Mail className="h-7 w-7" />
               </div>
             </div>
 
-            <h2 className="text-2xl font-bold mb-2 tracking-tight">Check your email</h2>
-            <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
-              If an account exists for <strong className="text-foreground font-semibold">{email}</strong>, we have sent a password reset link to your inbox.
+            <h2 className="text-xl font-bold mb-2 tracking-tight text-white">Check your email</h2>
+            <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+              If an account exists for <strong className="text-slate-200">{email}</strong>, we have sent a password reset link to your inbox.
             </p>
 
-            <div className="rounded-2xl border border-border/40 bg-accent/40 px-4 py-3.5 text-xs text-muted-foreground text-left mb-6 space-y-1.5 backdrop-blur-sm">
-              <p className="font-semibold text-foreground flex items-center gap-1.5">
-                <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
-                Next steps:
+            <div className="rounded-xl border border-white/5 bg-slate-950/40 px-4 py-3 text-xs text-slate-400 text-left mb-5 space-y-1">
+              <p className="font-semibold text-slate-200 flex items-center gap-1.5 text-[11px] font-mono uppercase">
+                <CheckCircle2 className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                Instructions:
               </p>
-              <p>1. Open the reset email in your inbox (Gmail, Outlook, etc.).</p>
-              <p>2. Check your <strong>Spam or Junk</strong> folder if not visible within 2 minutes.</p>
-              <p>3. The link will safely expire in <strong>30 minutes</strong>.</p>
+              <p>1. Open the reset link in your email.</p>
+              <p>2. Check your Spam or Junk folder if delayed.</p>
+              <p>3. Link expires in 30 minutes.</p>
             </div>
 
             {/* Resend Action */}
-            <div className="border-t border-border/50 pt-5 space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Didn't receive the email?
-              </p>
-
+            <div className="border-t border-white/5 pt-4 space-y-2.5">
               <button
                 type="button"
                 onClick={handleResend}
                 disabled={cooldown > 0 || isResending}
-                className="w-full flex items-center justify-center gap-2 rounded-xl border border-border/80 bg-background/80 px-4 py-2.5 text-sm font-medium text-foreground transition-all hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed hover-glow"
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 text-xs font-medium text-slate-200 hover:border-sky-400/40 disabled:opacity-50 cursor-pointer"
               >
                 {isResending ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Sending new link…
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Sending link…
                   </>
                 ) : cooldown > 0 ? (
                   <>
                     <RefreshCw className="h-3.5 w-3.5 opacity-50" />
-                    Resend available in {cooldown}s
+                    Resend in {cooldown}s
                   </>
                 ) : (
                   <>
-                    <RefreshCw className="h-3.5 w-3.5 text-primary" />
+                    <RefreshCw className="h-3.5 w-3.5 text-sky-400" />
                     Send a new reset link
                   </>
                 )}
@@ -170,34 +154,34 @@ function ForgotPasswordPage() {
                   setCooldown(0);
                   setError("");
                 }}
-                className="text-xs text-muted-foreground hover:text-foreground underline transition-colors cursor-pointer"
+                className="text-xs text-slate-400 hover:text-sky-300 transition-colors cursor-pointer"
               >
                 Use a different email address
               </button>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-border/40">
+            <div className="mt-5 pt-4 border-t border-white/5">
               <Link
                 to="/login"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-sky-400 hover:text-sky-300"
               >
-                <ArrowLeft className="h-4 w-4" /> Back to sign in
+                <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
               </Link>
             </div>
-          </div>
+          </GlassCard>
         ) : (
           /* ── Initial Form View ── */
-          <div className="rounded-3xl border border-border/70 bg-card/70 p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
+          <GlassCard variant="elevated" className="p-7 sm:p-9">
             <div className="text-center mb-6">
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2">Forgot password?</h2>
-              <p className="text-sm text-muted-foreground">
-                Enter your registered email address and we'll send you a secure password reset link.
+              <h2 className="text-xl font-bold tracking-tight text-white mb-1.5">Reset your password</h2>
+              <p className="text-xs text-slate-400">
+                Enter your registered email address to receive a secure recovery link.
               </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4" noValidate>
               <div>
-                <label htmlFor="forgot-email" className="block text-sm font-medium mb-1.5">
+                <label htmlFor="forgot-email" className="block text-[11px] font-mono text-slate-300 uppercase tracking-wider mb-1">
                   Email address
                 </label>
                 <input
@@ -210,21 +194,20 @@ function ForgotPasswordPage() {
                     setEmail(e.target.value);
                     setError("");
                   }}
-                  placeholder="name@example.com"
-                  className="w-full rounded-xl border border-border/80 bg-card/60 px-4 py-2.5 text-sm outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  style={{ borderColor: error ? "var(--destructive)" : undefined }}
+                  placeholder="student@university.edu"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-400/60 focus:ring-1 focus:ring-sky-400/30 transition-all"
                 />
-                {error && <p className="mt-1.5 text-xs text-destructive">{error}</p>}
+                {error && <p className="mt-1 text-[11px] text-rose-400">{error}</p>}
               </div>
 
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold gradient-brand text-brand-foreground shadow-lg shadow-orange-950/25 transition-all duration-200 disabled:opacity-50 hover-lift cursor-pointer active:scale-[0.98]"
+                className="w-full py-2.5 rounded-xl border border-sky-400/40 bg-gradient-to-r from-sky-500/20 via-indigo-500/25 to-sky-500/20 text-sky-100 font-semibold text-sm tracking-wide transition-all duration-200 hover:border-sky-400/70 hover:shadow-[0_0_20px_rgba(56,189,248,0.2)] active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Sending reset link…
+                    <Loader2 className="h-4 w-4 animate-spin text-sky-300" /> Sending reset link…
                   </>
                 ) : (
                   <>
@@ -234,13 +217,13 @@ function ForgotPasswordPage() {
               </button>
             </form>
 
-            <p className="mt-6 text-center text-sm text-muted-foreground">
+            <p className="mt-6 text-center text-xs text-slate-400">
               Remember your password?{" "}
-              <Link to="/login" className="text-primary font-medium hover:underline">
-                Sign in
+              <Link to="/login" className="text-sky-400 hover:text-sky-300 font-medium">
+                Sign in →
               </Link>
             </p>
-          </div>
+          </GlassCard>
         )}
       </div>
     </div>

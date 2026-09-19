@@ -1,15 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Check, Eye, EyeOff, Loader2, Sparkles, UserPlus } from "lucide-react";
+import { Check, Eye, EyeOff, Loader2, UserPlus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { API_BASE } from "@/lib/api";
+import { Atmosphere, ParticleField, SparkCore, GlassCard } from "@/components/astra";
 
 export const Route = createFileRoute("/register")({
   head: () => ({
     meta: [
       { title: "Create Account | SS Spark" },
-      { name: "description", content: "Create your free SS Spark account" },
+      { name: "description", content: "Create your free SS Spark account — Astra-Powered AI Question Paper Analyzer" },
     ],
   }),
   component: RegisterPage,
@@ -22,6 +23,19 @@ function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [mousePos, setMousePos] = useState({ x: 0.5, y: 0.5 });
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    setMousePos({
+      x: e.clientX / window.innerWidth,
+      y: e.clientY / window.innerHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
+    return () => window.removeEventListener("mousemove", handleMouseMove);
+  }, [handleMouseMove]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -83,190 +97,208 @@ function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
-      {/* Decorative left panel */}
-      <div className="hidden lg:flex lg:w-1/2 relative items-center justify-center overflow-hidden bg-[#070709] border-r border-border/40">
-        {/* Ambient background glows */}
-        <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-primary/20 blur-[120px] pointer-events-none animate-pulse-glow" />
-        <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-chart-1/15 blur-[120px] pointer-events-none animate-pulse-glow" style={{ animationDelay: "2.5s" }} />
-        <div
-          className="absolute inset-0 opacity-20 pointer-events-none"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle at 60% 40%, oklch(0.76 0.19 60) 0%, transparent 55%), radial-gradient(circle at 30% 70%, oklch(0.68 0.22 45) 0%, transparent 45%)",
-          }}
-        />
+    <div className="relative min-h-screen w-full overflow-hidden flex flex-col items-center justify-center px-4 py-8">
+      {/* ── Astra Cosmic Atmosphere & Particles ── */}
+      <Atmosphere mouseX={mousePos.x} mouseY={mousePos.y} showGrid={true} intensity="full" />
+      <ParticleField mouseX={mousePos.x} mouseY={mousePos.y} density="medium" />
 
-        <div className="relative z-10 max-w-lg px-12 text-center">
-          <div className="mb-8 flex justify-center">
-            <div className="relative">
-              <span className="absolute -inset-2 rounded-3xl bg-primary/30 blur-xl animate-pulse-glow" />
-              <div className="relative p-4 rounded-2xl gradient-brand shadow-xl shadow-primary/25 animate-float">
-                <Sparkles className="h-10 w-10 text-brand-foreground" />
-              </div>
-            </div>
+      {/* ── Top Header Brand ── */}
+      <header className="absolute top-6 inset-x-0 flex items-center justify-between px-6 sm:px-12 z-20 pointer-events-none">
+        <Link to="/" className="flex items-center gap-3 pointer-events-auto">
+          <SparkCore variant="compact" />
+          <span className="text-sm font-bold tracking-widest text-slate-200 uppercase font-mono">
+            SS SPARK
+          </span>
+        </Link>
+        <Link
+          to="/login"
+          className="pointer-events-auto text-xs font-mono text-slate-400 hover:text-sky-300 transition-colors py-1.5 px-3 rounded-lg border border-white/5 hover:border-sky-400/30 bg-slate-950/40 backdrop-blur-md"
+        >
+          Sign in →
+        </Link>
+      </header>
+
+      {/* ── Center Container ── */}
+      <div className="relative z-10 w-full max-w-5xl mx-auto flex flex-col lg:flex-row items-center justify-center gap-10 lg:gap-14 pt-14 lg:pt-0">
+        {/* Left Side: Astra Perks & Core */}
+        <div className="flex flex-col items-center text-center lg:text-left lg:items-start max-w-md">
+          <div className="mb-2">
+            <SparkCore mouseX={mousePos.x} mouseY={mousePos.y} variant="ambient" showBadges={false} />
           </div>
-
-          <h1 className="text-4xl font-extrabold tracking-tight text-white mb-3" style={{ fontFamily: "var(--font-display)" }}>
-            Join SS Spark
+          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-white font-display">
+            Join the <span className="gradient-text">SS Spark Universe</span>
           </h1>
-          <p className="text-base text-white/70 leading-relaxed mb-8 max-w-md mx-auto">
-            Start analyzing question papers with AI in minutes. Free to get started with instant citation and grounded answers.
+          <p className="mt-2 text-sm text-slate-400 leading-relaxed max-w-sm">
+            Instant paper analysis, handwritten exam OCR, step-by-step math solver, and grounded citations.
           </p>
 
-          {/* Features list */}
-          <div className="space-y-3 text-left max-w-sm mx-auto rounded-2xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur-md shadow-xl">
+          {/* Features check list */}
+          <div className="mt-6 space-y-2.5 w-full max-w-sm text-left">
             {[
-              "Upload unlimited question papers & notes",
-              "AI answers grounded strictly in your files",
-              "Exact citations with page numbers",
-              "Topic trends & exam question analytics",
-              "Interactive Search Pad with instant filtering",
-            ].map((f) => (
-              <div key={f} className="flex items-start gap-3">
-                <div className="h-5 w-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">
-                  <Check className="h-3 w-3" strokeWidth={2.5} />
+              "Unlimited question paper & textbook analysis",
+              "100% document-grounded answers with citations",
+              "Mathematical formula & code precision",
+              "Topic repetition & recurring questions tracker",
+            ].map((text) => (
+              <div
+                key={text}
+                className="flex items-center gap-3 rounded-xl border border-white/5 bg-slate-950/30 px-3 py-2 backdrop-blur-sm"
+              >
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-500/20 text-sky-400 border border-sky-400/30">
+                  <Check className="h-3 w-3" />
                 </div>
-                <span className="text-sm text-white/85 leading-snug">{f}</span>
+                <span className="text-xs text-slate-300">{text}</span>
               </div>
             ))}
           </div>
         </div>
-      </div>
 
-      {/* Form right panel */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12 relative overflow-hidden">
-        <div className="absolute top-1/4 right-1/4 w-80 h-80 rounded-full bg-primary/5 blur-[100px] pointer-events-none" />
-
-        <div className="w-full max-w-md relative z-10">
-          <div className="lg:hidden flex justify-center mb-8">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2.5 rounded-2xl gradient-brand shadow-md">
-                <Sparkles className="h-6 w-6 text-brand-foreground" />
-              </div>
-              <span className="text-2xl font-bold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
-                SS Spark
-              </span>
+        {/* Right Side: Registration Console */}
+        <div className="w-full max-w-md">
+          <GlassCard variant="elevated" className="p-7 sm:p-9">
+            <div className="mb-6">
+              <h2 className="text-xl font-bold tracking-tight text-white">Create your account</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Enter your details to generate your workspace credentials
+              </p>
             </div>
-          </div>
 
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-extrabold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
-              Create account
-            </h2>
-            <p className="text-sm text-muted-foreground mt-2">Get started with SS Spark for free</p>
-          </div>
-
-          {/* OAuth button */}
-          <div className="mb-6">
+            {/* OAuth Google button */}
             <a
               href={`${API_BASE}/api/auth/oauth/google`}
-              onClick={(e) => handleOAuthClick(e)}
-              className="flex w-full items-center justify-center gap-3 rounded-xl border border-border/80 bg-card/80 px-4 py-3 text-sm font-medium shadow-sm backdrop-blur-sm transition-all hover:bg-accent hover:border-border hover-lift"
+              onClick={handleOAuthClick}
+              className="flex w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-slate-900/60 py-2.5 px-4 text-xs font-medium text-slate-200 transition-all duration-200 hover:border-sky-400/40 hover:bg-slate-800/60 hover:text-white"
             >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+              <svg width="15" height="15" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.36 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.28 14.27A7.2 7.2 0 0 1 4.9 12c0-.79.14-1.56.38-2.27V6.58H1.25A11.98 11.98 0 0 0 0 12c0 1.92.45 3.74 1.25 5.42l4.03-3.15z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.36 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                />
               </svg>
               Sign up with Google
             </a>
-          </div>
 
-          <div className="relative mb-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border/70" />
+            <div className="relative my-4 flex items-center">
+              <div className="flex-grow border-t border-white/10" />
+              <span className="mx-3 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+                Or with Email
+              </span>
+              <div className="flex-grow border-t border-white/10" />
             </div>
-            <div className="relative flex justify-center">
-              <span className="bg-background px-3 text-xs text-muted-foreground/80">or register with email</span>
-            </div>
-          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-            {[
-              { id: "name", label: "Full Name", type: "text", placeholder: "Your name", key: "name" },
-              { id: "email", label: "Email address", type: "email", placeholder: "you@example.com", key: "email" },
-            ].map(({ id, label, type, placeholder, key }) => (
-              <div key={id}>
-                <label htmlFor={id} className="block text-sm font-medium mb-1.5">{label}</label>
+            <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+              <div>
+                <label className="block text-[11px] font-mono text-slate-300 uppercase tracking-wider mb-1">
+                  Full Name
+                </label>
                 <input
-                  id={id}
-                  type={type}
-                  value={form[key as keyof typeof form]}
-                  onChange={(e) => set(key, e.target.value)}
-                  placeholder={placeholder}
-                  className="w-full rounded-xl border border-border/80 bg-card/60 px-4 py-2.5 text-sm outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  style={{ borderColor: errors[key] ? "var(--destructive)" : undefined }}
+                  id="name"
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  placeholder="Alex Mercer"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3.5 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-400/60 focus:ring-1 focus:ring-sky-400/30 transition-all"
                 />
-                {errors[key] && <p className="mt-1 text-xs text-destructive">{errors[key]}</p>}
+                {errors.name && <p className="text-[11px] text-rose-400 mt-1">{errors.name}</p>}
               </div>
-            ))}
 
-            {/* Password */}
-            <div>
-              <label htmlFor="reg-password" className="block text-sm font-medium mb-1.5">Password</label>
-              <div className="relative">
+              <div>
+                <label className="block text-[11px] font-mono text-slate-300 uppercase tracking-wider mb-1">
+                  Email address
+                </label>
                 <input
-                  id="reg-password"
-                  type={showPassword ? "text" : "password"}
-                  value={form.password}
-                  onChange={(e) => set("password", e.target.value)}
-                  placeholder="At least 8 characters"
-                  className="w-full rounded-xl border border-border/80 bg-card/60 px-4 py-2.5 pr-10 text-sm outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  style={{ borderColor: errors.password ? "var(--destructive)" : undefined }}
+                  id="email"
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => set("email", e.target.value)}
+                  placeholder="student@university.edu"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3.5 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-400/60 focus:ring-1 focus:ring-sky-400/30 transition-all"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((p) => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label="Toggle password"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                {errors.email && <p className="text-[11px] text-rose-400 mt-1">{errors.email}</p>}
               </div>
-              {errors.password && <p className="mt-1 text-xs text-destructive">{errors.password}</p>}
-            </div>
 
-            {/* Confirm Password */}
-            <div>
-              <label htmlFor="confirm" className="block text-sm font-medium mb-1.5">Confirm Password</label>
-              <input
-                id="confirm"
-                type="password"
-                value={form.confirm}
-                onChange={(e) => set("confirm", e.target.value)}
-                placeholder="Repeat your password"
-                className="w-full rounded-xl border border-border/80 bg-card/60 px-4 py-2.5 text-sm outline-none transition-all placeholder:text-muted-foreground/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
-                style={{ borderColor: errors.confirm ? "var(--destructive)" : undefined }}
-              />
-              {errors.confirm && <p className="mt-1 text-xs text-destructive">{errors.confirm}</p>}
-            </div>
+              <div>
+                <label className="block text-[11px] font-mono text-slate-300 uppercase tracking-wider mb-1">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={form.password}
+                    onChange={(e) => set("password", e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3.5 py-2 pr-10 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-400/60 focus:ring-1 focus:ring-sky-400/30 transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((p) => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  >
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                {errors.password && (
+                  <p className="text-[11px] text-rose-400 mt-1">{errors.password}</p>
+                )}
+              </div>
 
-            <button
-              id="register-submit-btn"
-              type="submit"
-              disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold gradient-brand text-brand-foreground shadow-lg shadow-orange-950/25 transition-all duration-200 disabled:opacity-50 hover-lift cursor-pointer active:scale-[0.98]"
-            >
-              {isLoading ? (
-                <><Loader2 className="h-4 w-4 animate-spin" /> Creating account…</>
-              ) : (
-                <><UserPlus className="h-4 w-4" /> Create Account</>
-              )}
-            </button>
+              <div>
+                <label className="block text-[11px] font-mono text-slate-300 uppercase tracking-wider mb-1">
+                  Confirm Password
+                </label>
+                <input
+                  id="confirm"
+                  type="password"
+                  value={form.confirm}
+                  onChange={(e) => set("confirm", e.target.value)}
+                  placeholder="Repeat your password"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3.5 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-400/60 focus:ring-1 focus:ring-sky-400/30 transition-all"
+                />
+                {errors.confirm && (
+                  <p className="text-[11px] text-rose-400 mt-1">{errors.confirm}</p>
+                )}
+              </div>
 
-            <p className="text-[11px] text-center text-muted-foreground/70">
-              By signing up you agree to our Terms of Service and Privacy Policy.
+              <button
+                id="register-submit-btn"
+                type="submit"
+                disabled={isLoading}
+                className="w-full py-2.5 rounded-xl border border-sky-400/40 bg-gradient-to-r from-sky-500/20 via-indigo-500/25 to-sky-500/20 text-sky-100 font-semibold text-sm tracking-wide transition-all duration-200 hover:border-sky-400/70 hover:shadow-[0_0_20px_rgba(56,189,248,0.2)] active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2 mt-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin text-sky-300" />
+                    Creating account…
+                  </>
+                ) : (
+                  <>
+                    <UserPlus size={15} />
+                    Create Account
+                  </>
+                )}
+              </button>
+            </form>
+
+            <p className="mt-5 text-center text-xs text-slate-400">
+              Already have an account?{" "}
+              <Link to="/login" className="text-sky-400 hover:text-sky-300 font-medium">
+                Sign in →
+              </Link>
             </p>
-          </form>
-
-          <p className="mt-6 text-center text-sm text-muted-foreground">
-            Already have an account?{" "}
-            <Link to="/login" className="text-primary font-medium hover:underline">
-              Sign in
-            </Link>
-          </p>
+          </GlassCard>
         </div>
       </div>
     </div>

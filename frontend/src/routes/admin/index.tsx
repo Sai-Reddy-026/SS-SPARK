@@ -11,7 +11,7 @@ import { StatsCard, SystemHealth } from "@/components/admin/StatsCard";
 import { adminApi, type GlobalStats, type SystemHealth as HealthType } from "@/lib/admin-api";
 
 export const Route = createFileRoute("/admin/")({
-  head: () => ({ meta: [{ title: "Admin Dashboard | SS Spark" }] }),
+  head: () => ({ meta: [{ title: "Admin Console | SS Spark" }] }),
   component: AdminDashboard,
 });
 
@@ -61,35 +61,35 @@ function AdminDashboard() {
     return (
       <div className="p-8">
         <div className="animate-pulse space-y-6">
-          <div className="h-8 w-48 rounded-lg bg-muted" />
+          <div className="h-8 w-48 rounded-xl bg-slate-900/60" />
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-32 rounded-2xl bg-muted" />
+              <div key={i} className="h-32 rounded-2xl bg-slate-900/40" />
             ))}
           </div>
-          <div className="h-64 rounded-2xl bg-muted" />
+          <div className="h-64 rounded-2xl bg-slate-900/40" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 sm:p-8 space-y-8">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
-            Admin Dashboard
+          <h1 className="text-2xl font-bold text-white tracking-tight font-display">
+            System Intelligence Console
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Platform overview and system health</p>
+          <p className="text-xs text-slate-400 font-mono mt-1">Platform metrics, telemetry, and vector store health</p>
         </div>
         <button
           onClick={() => loadData(true)}
           disabled={refreshing}
-          className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-sm hover:bg-accent transition-colors"
+          className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-900/60 px-3.5 py-2 text-xs font-medium text-slate-200 hover:border-sky-400/40 hover:bg-slate-800/80 transition-all cursor-pointer"
         >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-          Refresh
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin text-sky-400" : ""}`} />
+          Refresh Metrics
         </button>
       </div>
 
@@ -99,120 +99,126 @@ function AdminDashboard() {
           title="Total Users"
           value={stats?.total_users ?? 0}
           subtitle={`${stats?.new_users_last_7_days ?? 0} new this week`}
-          icon={<Users className="h-5 w-5" />}
+          icon={<Users className="h-4 w-4" />}
           trend={{ value: 12, label: "vs last month" }}
-          color="oklch(0.68 0.22 45)"
+          color="#38bdf8"
         />
         <StatsCard
           title="Active Users"
           value={stats?.active_users ?? 0}
-          icon={<Zap className="h-5 w-5" />}
-          color="oklch(0.72 0.16 158)"
+          icon={<Zap className="h-4 w-4" />}
+          color="#34d399"
         />
         <StatsCard
           title="Documents"
           value={stats?.total_documents ?? 0}
-          icon={<FileText className="h-5 w-5" />}
-          color="oklch(0.76 0.19 60)"
+          icon={<FileText className="h-4 w-4" />}
+          color="#818cf8"
         />
         <StatsCard
           title="Questions Asked"
           value={stats?.total_questions ?? 0}
-          icon={<MessageSquare className="h-5 w-5" />}
-          color="oklch(0.68 0.22 45)"
+          icon={<MessageSquare className="h-4 w-4" />}
+          color="#38bdf8"
         />
         <StatsCard
           title="Chat Sessions"
           value={stats?.total_sessions ?? 0}
-          icon={<Bot className="h-5 w-5" />}
-          color="oklch(0.68 0.22 45)"
+          icon={<Bot className="h-4 w-4" />}
+          color="#a78bfa"
         />
         <StatsCard
           title="Storage Used"
           value={`${((stats?.total_storage_mb ?? 0) / 1024).toFixed(2)} GB`}
-          icon={<HardDrive className="h-5 w-5" />}
-          color="oklch(0.62 0.21 22)"
+          icon={<HardDrive className="h-4 w-4" />}
+          color="#f43f5e"
         />
         <StatsCard
           title="Indexed Chunks"
           value={health?.chromadb?.chunk_count ?? 0}
-          icon={<Database className="h-5 w-5" />}
-          color="oklch(0.76 0.19 60)"
+          icon={<Database className="h-4 w-4" />}
+          color="#60a5fa"
         />
         <StatsCard
           title="PaperQA Docs"
           value={health?.paperqa?.indexed_documents ?? 0}
-          icon={<Server className="h-5 w-5" />}
-          color="oklch(0.72 0.16 158)"
+          icon={<Server className="h-4 w-4" />}
+          color="#34d399"
         />
       </div>
 
       {/* Charts + Health */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Activity chart */}
-        <div className="lg:col-span-2 rounded-2xl border border-border p-5" style={{ background: "var(--card)" }}>
+        <div className="lg:col-span-2 relative overflow-hidden rounded-2xl border border-white/5 bg-[rgba(9,15,30,0.65)] p-5 backdrop-blur-xl shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold" style={{ fontFamily: "var(--font-display)" }}>
-              Platform Activity (30 days)
+            <h3 className="text-xs font-mono font-medium tracking-wider text-slate-400 uppercase">
+              Platform Query & Upload Volume (30 Days)
             </h3>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "oklch(0.68 0.22 45)" }} />Questions</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "oklch(0.76 0.19 60)" }} />Uploads</span>
+            <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_6px_#38bdf8]" />Questions</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-indigo-400 shadow-[0_0_6px_#818cf8]" />Uploads</span>
             </div>
           </div>
           {activity.length > 0 ? (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={230}>
               <AreaChart data={activity}>
                 <defs>
                   <linearGradient id="qGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="oklch(0.68 0.22 45)" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="oklch(0.68 0.22 45)" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="uGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="oklch(0.76 0.19 60)" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="oklch(0.76 0.19 60)" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} tickLine={false} axisLine={false}
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false}
                        tickFormatter={(v) => v.slice(5)} />
-                <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{
-                    background: "var(--card)", border: "1px solid var(--border)",
-                    borderRadius: "12px", fontSize: "12px",
+                    background: "rgba(10, 16, 32, 0.95)",
+                    border: "1px solid rgba(56, 189, 248, 0.2)",
+                    borderRadius: "12px",
+                    fontSize: "12px",
+                    color: "#f8fafc",
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
                   }}
                 />
-                <Area type="monotone" dataKey="questions" stroke="oklch(0.68 0.22 45)"
+                <Area type="monotone" dataKey="questions" stroke="#38bdf8"
                       fill="url(#qGrad)" strokeWidth={2} dot={false} name="Questions" />
-                <Area type="monotone" dataKey="uploads" stroke="oklch(0.76 0.19 60)"
+                <Area type="monotone" dataKey="uploads" stroke="#818cf8"
                       fill="url(#uGrad)" strokeWidth={2} dot={false} name="Uploads" />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="flex items-center justify-center h-52 text-sm text-muted-foreground">
-              No activity data yet.
+            <div className="flex items-center justify-center h-52 text-xs font-mono text-slate-500">
+              No activity telemetry recorded yet.
             </div>
           )}
         </div>
 
-        {/* System health */}
-        <div className="space-y-4">
+        {/* System health & Quick Links */}
+        <div className="space-y-6">
           <SystemHealth items={healthItems} />
 
           {/* Quick links */}
-          <div className="rounded-2xl border border-border p-4" style={{ background: "var(--card)" }}>
-            <h3 className="text-sm font-semibold mb-3" style={{ fontFamily: "var(--font-display)" }}>Quick Actions</h3>
-            <div className="space-y-2">
+          <div className="relative overflow-hidden rounded-2xl border border-white/5 bg-[rgba(9,15,30,0.65)] p-5 backdrop-blur-xl shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
+            <h3 className="text-xs font-mono font-medium tracking-wider text-slate-400 uppercase mb-3">
+              Direct Controls
+            </h3>
+            <div className="space-y-1.5">
               {[
-                { href: "/admin/users", label: "Manage Users", icon: Users },
-                { href: "/admin/documents", label: "View Documents", icon: FileText },
-                { href: "/admin/analytics", label: "Full Analytics", icon: BarChart3 },
-                { href: "/admin/logs", label: "System Logs", icon: MessageSquare },
+                { href: "/admin/users", label: "User Directory", icon: Users },
+                { href: "/admin/documents", label: "Document Registry", icon: FileText },
+                { href: "/admin/analytics", label: "Deep Analytics", icon: BarChart3 },
+                { href: "/admin/logs", label: "System Telemetry Logs", icon: MessageSquare },
               ].map(({ href, label, icon: Icon }) => (
                 <a key={href} href={href}
-                   className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-accent transition-colors">
-                  <Icon className="h-4 w-4 text-muted-foreground" />
+                   className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800/60 hover:text-sky-300 transition-colors">
+                  <Icon className="h-3.5 w-3.5 text-sky-400" />
                   {label}
                 </a>
               ))}

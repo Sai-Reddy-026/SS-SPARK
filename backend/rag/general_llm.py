@@ -32,10 +32,10 @@ FIRST_TOKEN_TIMEOUT_S = 3.5
 
 # Model definitions per provider
 GEMINI_MODELS = [
+    "gemini/gemini-3.5-flash",
     "gemini/gemini-3.6-flash",
     "gemini/gemini-3.7-flash",
-    "gemini/gemini-3.5-flash",
-    "gemini/gemini-3.5-flash-lite",
+    "gemini/gemini-3.8-flash",
 ]
 
 NVIDIA_MODELS = [
@@ -243,7 +243,7 @@ async def vision_chat(
         prompt_parts.append(f"USER QUESTION: {question}")
         prompt_parts.append(pil_img)
 
-        models_to_try = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash"]
+        models_to_try = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]
         for m_name in models_to_try:
             try:
                 model = genai.GenerativeModel(m_name)
@@ -264,9 +264,42 @@ async def vision_chat(
                 continue
 
     except Exception as exc:
-        logger.exception("%sDirect vision failed: %s", tag, exc)
+        logger.warning("%sDirect vision (genai) failed: %s", tag, exc)
 
-    return await general_chat(question, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id)
+    # Secondary vision fallback: try LiteLLM with base64 inline image
+    try:
+        import litellm
+        import io, base64
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=85)
+        b64_str = base64.b64encode(buf.getvalue()).decode()
+        vision_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (system_prompt or "") + f"\n\nUSER QUESTION: {question}"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}},
+                ],
+            }
+        ]
+        for model in ["gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
+            try:
+                logger.info("%svision_litellm_fallback model=%s", tag, model)
+                resp = await litellm.acompletion(model=model, messages=vision_messages, max_tokens=2048, timeout=30.0)
+                answer = resp.choices[0].message.content or ""
+                if answer:
+                    return {"answer": answer, "sources": [], "confidence": 0.92, "references": "", "cost": 0.0001, "status": "success"}
+            except Exception as lm_err:
+                logger.warning("%svision_litellm model %s failed: %s", tag, model, lm_err)
+    except Exception as fb_exc:
+        logger.warning("%svision secondary fallback failed: %s", tag, fb_exc)
+
+    # Last resort: text-only but acknowledge the image was received
+    fallback_q = (
+        f"{question}\n\n[Note: An image was uploaded by the user but the vision model could not process it "
+        "at this time. Please acknowledge this and ask the user to try again or describe the content manually.]"
+    )
+    return await general_chat(fallback_q, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id)
 
 
 async def vision_chat_stream(
@@ -319,7 +352,7 @@ async def vision_chat_stream(
         prompt_parts.append(f"USER QUESTION: {question}")
         prompt_parts.append(pil_img)
 
-        models_to_try = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash"]
+        models_to_try = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]
         yielded_any = False
         for m_name in models_to_try:
             try:
@@ -344,7 +377,48 @@ async def vision_chat_stream(
     except Exception as exc:
         logger.exception("%svision_stream unhandled error: %s", tag, exc)
 
-    async for chunk in general_chat_stream(question, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id):
+    # Secondary streaming fallback: LiteLLM with base64 inline image
+    try:
+        import litellm
+        import io, base64
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=85)
+        b64_str = base64.b64encode(buf.getvalue()).decode()
+        vision_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (system_prompt or "") + f"\n\nUSER QUESTION: {question}"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}},
+                ],
+            }
+        ]
+        for model in ["gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
+            try:
+                logger.info("%svision_stream_litellm_fallback model=%s", tag, model)
+                fb_stream = await litellm.acompletion(
+                    model=model, messages=vision_messages, max_tokens=2048, timeout=30.0, stream=True
+                )
+                fb_yielded = False
+                async for chunk in fb_stream:
+                    delta = chunk.choices[0].delta if (chunk and chunk.choices) else None
+                    content = getattr(delta, "content", "") if delta else ""
+                    if content:
+                        fb_yielded = True
+                        yield ("token", content)
+                if fb_yielded:
+                    return
+            except Exception as lm_err:
+                logger.warning("%svision_stream_litellm model %s failed: %s", tag, model, lm_err)
+    except Exception as fb_exc:
+        logger.warning("%svision_stream secondary fallback failed: %s", tag, fb_exc)
+
+    # Last resort fallback: text-only with acknowledgement
+    fallback_q = (
+        f"{question}\n\n[Note: An image was uploaded but vision model is temporarily unavailable. "
+        "Please acknowledge this and ask the user to describe the content or try again.]"
+    )
+    async for chunk in general_chat_stream(fallback_q, system_prompt=system_prompt, chat_history=chat_history, req_id=req_id):
         yield chunk
 
 

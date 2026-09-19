@@ -511,48 +511,44 @@ function AnalyzerPage() {
       });
       setDocs((current) => [...added, ...current]);
 
-      if (isAuthenticated) {
-        try {
-          const uploadRes = await documentsApi.upload(files);
-          toast.success(`${files.length} file${files.length > 1 ? "s" : ""} uploaded and indexed!`);
+      try {
+        const uploadRes = await documentsApi.upload(files);
+        toast.success(`${files.length} file${files.length > 1 ? "s" : ""} uploaded and indexed!`);
 
-          if (uploadRes.data && uploadRes.data.length > 0) {
-            const previewMap = new Map<string, string>();
-            added.forEach((d) => {
-              if (d.previewUrl) previewMap.set(d.name, d.previewUrl);
-            });
-            const serverDocs: UploadedDoc[] = uploadRes.data.map((doc) => {
-              const docName = doc.name || doc.filename || "Document";
-              return {
-                id: doc.id,
-                name: docName,
-                kind: kindFromName(docName),
-                typeLabel: typeLabel(kindFromName(docName)),
-                uploadedAt: new Date(doc.uploaded_at),
-                pages: doc.pages,
-                previewUrl: previewMap.get(docName) ?? previewMap.get(doc.filename),
-              };
-            });
-            setDocs((current) => {
-              const nonOptimistic = current.filter((d) => !added.some((a) => a.id === d.id));
-              return [...serverDocs, ...nonOptimistic];
-            });
-          }
-        } catch (err: unknown) {
-          toast.error(err instanceof Error ? err.message : "Upload failed");
+        if (uploadRes.data && uploadRes.data.length > 0) {
+          const previewMap = new Map<string, string>();
+          added.forEach((d) => {
+            if (d.previewUrl) previewMap.set(d.name, d.previewUrl);
+          });
+          const serverDocs: UploadedDoc[] = uploadRes.data.map((doc) => {
+            const docName = doc.name || doc.filename || "Document";
+            return {
+              id: doc.id,
+              name: docName,
+              kind: kindFromName(docName),
+              typeLabel: typeLabel(kindFromName(docName)),
+              uploadedAt: new Date(doc.uploaded_at),
+              pages: doc.pages,
+              previewUrl: previewMap.get(docName) ?? previewMap.get(doc.filename),
+            };
+          });
           setDocs((current) => {
-            const filtered = current.filter((d) => !added.some((a) => a.id === d.id));
-            added.forEach((a) => {
-              if (a.previewUrl && blobUrlsRef.current.has(a.previewUrl)) {
-                URL.revokeObjectURL(a.previewUrl);
-                blobUrlsRef.current.delete(a.previewUrl);
-              }
-            });
-            return filtered;
+            const nonOptimistic = current.filter((d) => !added.some((a) => a.id === d.id));
+            return [...serverDocs, ...nonOptimistic];
           });
         }
-      } else {
-        toast.success(`${added.length} file${added.length > 1 ? "s" : ""} added (guest mode — not saved)`);
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "Upload failed");
+        setDocs((current) => {
+          const filtered = current.filter((d) => !added.some((a) => a.id === d.id));
+          added.forEach((a) => {
+            if (a.previewUrl && blobUrlsRef.current.has(a.previewUrl)) {
+              URL.revokeObjectURL(a.previewUrl);
+              blobUrlsRef.current.delete(a.previewUrl);
+            }
+          });
+          return filtered;
+        });
       }
     },
     [isAuthenticated],

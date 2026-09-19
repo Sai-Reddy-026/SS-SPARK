@@ -172,13 +172,14 @@ def extract_structured_question_paper(
             "If there are no explicit question numbers, extract the problems or paragraphs into the questions list with q_num 'Q1', 'Q2', etc."
         )
 
-        models_to_try = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash"]
+        models_to_try = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]
         for m_name in models_to_try:
             try:
                 model = genai.GenerativeModel(m_name)
                 logger.info("Extracting structured questions from '%s' via %s", path.name, m_name)
                 res = model.generate_content([prompt, pil_img])
-                data = _parse_json_from_llm(res.text)
+                raw_out = getattr(res, "text", "") or ""
+                data = _parse_json_from_llm(raw_out)
                 if data and isinstance(data, dict):
                     full_text = data.get("full_text", "").strip()
                     questions = data.get("questions", [])
@@ -199,12 +200,57 @@ def extract_structured_question_paper(
                     }
                     logger.info("Vision extracted %d questions and %d chars from '%s'", len(questions), len(full_text), path.name)
                     return full_text, questions, meta
+                elif raw_out.strip():
+                    # Preserve transcribed text even if LLM did not format as JSON
+                    logger.info("Vision extracted non-JSON raw text (%d chars) from '%s'", len(raw_out), path.name)
+                    meta = {
+                        "success": True,
+                        "method": "vision",
+                        "confidence": 92.0,
+                        "title": path.stem,
+                        "sections": [],
+                        "question_count": 0,
+                    }
+                    return raw_out.strip(), [], meta
             except Exception as m_err:
                 logger.warning("Vision model %s failed on '%s': %s", m_name, path.name, m_err)
                 continue
 
     except Exception as exc:
         logger.exception("Visual question extraction failed for '%s': %s", path.name, exc)
+
+    # Secondary fallback: LiteLLM with base64 inline image
+    try:
+        import litellm
+        import io, base64
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=85)
+        b64_str = base64.b64encode(buf.getvalue()).decode()
+        vision_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}},
+                ],
+            }
+        ]
+        for model in ["gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
+            try:
+                import asyncio
+                resp = litellm.completion(model=model, messages=vision_messages, max_tokens=2048, timeout=30.0)
+                raw_out = resp.choices[0].message.content or ""
+                if raw_out.strip():
+                    data = _parse_json_from_llm(raw_out)
+                    if data and isinstance(data, dict):
+                        ftext = data.get("full_text", "").strip()
+                        qs = data.get("questions", [])
+                        return ftext or raw_out, qs, {"success": True, "method": "vision_litellm", "confidence": 90.0, "title": path.stem, "sections": [], "question_count": len(qs)}
+                    return raw_out.strip(), [], {"success": True, "method": "vision_litellm", "confidence": 90.0, "title": path.stem, "sections": [], "question_count": 0}
+            except Exception as lm_err:
+                logger.warning("LiteLLM vision fallback %s failed: %s", model, lm_err)
+    except Exception as fb_exc:
+        logger.warning("LiteLLM vision secondary fallback error: %s", fb_exc)
 
     return "", [], {"success": False, "method": "vision_error", "confidence": 0.0}
 
@@ -232,23 +278,55 @@ def extract_text_hybrid(image_or_path: Any, lang: Optional[str] = None) -> Tuple
             return text, conf, True
 
     # Fallback to Gemini Vision
-    try:
-        gemini_key = _get_gemini_api_key()
-        if gemini_key:
+    gemini_key = _get_gemini_api_key()
+    if gemini_key:
+        try:
             import google.generativeai as genai
             genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-3.6-flash")
             pil_img = preprocess_image_for_vision(image_or_path)
-            res = model.generate_content([
+            prompt = (
                 "Transcribe all readable text from this document image with high fidelity. "
-                "Preserve question numbering, tables, sections, and format math equations in LaTeX.",
-                pil_img
-            ])
-            text = res.text.strip()
-            if text:
-                return text, 95.0, True
-    except Exception as exc:
-        logger.warning("Hybrid vision fallback error: %s", exc)
+                "Preserve question numbering, tables, sections, and format math equations in LaTeX."
+            )
+            for m_name in ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]:
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    res = model.generate_content([prompt, pil_img])
+                    text = getattr(res, "text", "") or ""
+                    if text.strip():
+                        return text.strip(), 95.0, True
+                except Exception as m_err:
+                    logger.warning("Hybrid vision model %s failed: %s", m_name, m_err)
+                    continue
+        except Exception as exc:
+            logger.warning("Hybrid vision direct genai error: %s", exc)
+
+    # Secondary LiteLLM fallback for hybrid text extraction
+    try:
+        import litellm, io, base64
+        pil_img = preprocess_image_for_vision(image_or_path)
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=85)
+        b64_str = base64.b64encode(buf.getvalue()).decode()
+        vision_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Transcribe all readable text and math from this document with high fidelity."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_str}"}},
+                ],
+            }
+        ]
+        for model in ["gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
+            try:
+                resp = litellm.completion(model=model, messages=vision_messages, max_tokens=2048, timeout=30.0)
+                out = resp.choices[0].message.content or ""
+                if out.strip():
+                    return out.strip(), 92.0, True
+            except Exception as lm_err:
+                logger.warning("Hybrid LiteLLM %s failed: %s", model, lm_err)
+    except Exception as fb_exc:
+        logger.warning("Hybrid LiteLLM secondary fallback error: %s", fb_exc)
 
     return "", 0.0, False
 
@@ -393,7 +471,7 @@ def extract_text_with_confidence(
 
 def extract_text_from_image(image_path: str, lang: Optional[str] = None) -> str:
     """
-    Run high-quality OCR on an image file path.
+    Run high-quality OCR/Vision on an image file path.
     Returns extracted text string, or empty string if OCR fails.
     """
     path = Path(image_path)
@@ -402,15 +480,13 @@ def extract_text_from_image(image_path: str, lang: Optional[str] = None) -> str:
         return ""
 
     try:
-        from PIL import Image
-        with Image.open(str(path)) as img:
-            text, conf, success = extract_text_with_confidence(img, lang=lang)
-            if success:
-                logger.info("OCR extracted %d characters (conf: %.1f%%) from '%s'", len(text), conf, path.name)
+        text, conf, success = extract_text_hybrid(str(path), lang=lang)
+        if success and text:
+            logger.info("OCR/Vision extracted %d characters (conf: %.1f%%) from '%s'", len(text), conf, path.name)
             return text
     except Exception as exc:
-        logger.warning("Could not open image '%s' for OCR: %s", image_path, exc)
-        return ""
+        logger.warning("Could not process image '%s' for OCR: %s", image_path, exc)
+    return ""
 
 
 def process_image_to_chunks(
@@ -427,7 +503,7 @@ def process_image_to_chunks(
     Pipeline:
       1. Sidecar cache validation (*_ocr.txt, *_questions.json)
       2. Multimodal Gemini Vision question extraction (questions, options, LaTeX math, diagrams)
-      3. Fallback to adaptive Tesseract OCR if vision unavailable
+      3. Fallback to adaptive hybrid OCR (Tesseract / Gemini Vision / LiteLLM) if vision unavailable
       4. Generates structure-preserving TextChunks with question_number, section, and marks
     
     Returns:
@@ -508,31 +584,29 @@ def process_image_to_chunks(
         except Exception as vision_err:
             logger.warning("Vision question extraction error for '%s': %s", img_path.name, vision_err)
 
-        # B. Fallback to Tesseract OCR if Vision was unavailable
+        # B. Fallback to hybrid OCR / Vision if structured extraction returned empty
         if not extracted_text:
             try:
-                from PIL import Image
-                with Image.open(str(img_path)) as img:
-                    extracted_text, ocr_conf, ocr_success = extract_text_with_confidence(img, lang=lang)
-                    if ocr_success:
-                        extraction_method = "ocr"
-                        try:
-                            sidecar_path.write_text(extracted_text, encoding="utf-8")
-                            meta_path.write_text(
-                                json.dumps({
-                                    "filename": img_path.name,
-                                    "confidence": ocr_conf,
-                                    "success": True,
-                                    "method": "ocr",
-                                    "char_count": len(extracted_text),
-                                    "question_count": 0,
-                                }),
-                                encoding="utf-8",
-                            )
-                        except Exception:
-                            pass
+                extracted_text, ocr_conf, ocr_success = extract_text_hybrid(img_path, lang=lang)
+                if ocr_success and extracted_text:
+                    extraction_method = "hybrid_ocr"
+                    try:
+                        sidecar_path.write_text(extracted_text, encoding="utf-8")
+                        meta_path.write_text(
+                            json.dumps({
+                                "filename": img_path.name,
+                                "confidence": ocr_conf,
+                                "success": True,
+                                "method": "hybrid_ocr",
+                                "char_count": len(extracted_text),
+                                "question_count": 0,
+                            }),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
             except Exception as ocr_err:
-                logger.warning("Tesseract OCR fallback failed for '%s': %s", img_path.name, ocr_err)
+                logger.warning("Hybrid OCR fallback failed for '%s': %s", img_path.name, ocr_err)
 
     # 3. Build structured text chunks
     chunks: List[TextChunk] = []

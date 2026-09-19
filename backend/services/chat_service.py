@@ -344,11 +344,74 @@ async def ask_question(
                         ]
 
                 if pqa_result is None or not citations:
-                    pqa_result = await general_chat(
-                        question=question,
-                        chat_history=chat_history,
-                        req_id=req_id,
-                    )
+                    # Fallback: Check if any uploaded document has sidecar OCR text or is an image file
+                    doc_context = ""
+                    doc_img = None
+                    used_doc_name = ""
+                    for d in user_docs:
+                        fpath = getattr(d, "file_path", "")
+                        if not fpath:
+                            continue
+                        p = Path(fpath)
+                        sidecar_ocr = p.with_name(f"{p.stem}_ocr.txt")
+                        if sidecar_ocr.exists():
+                            try:
+                                t = sidecar_ocr.read_text(encoding="utf-8", errors="ignore").strip()
+                                if t and not t.startswith("[Image Document:"):
+                                    doc_context = t[:6000]
+                                    used_doc_name = d.name
+                                    break
+                            except Exception:
+                                pass
+                        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and p.exists():
+                            doc_img = str(p)
+                            used_doc_name = d.name
+                            break
+
+                    if doc_context:
+                        citations = [
+                            {
+                                "id": str(uuid.uuid4()),
+                                "doc_id": getattr(user_docs[0], "id", ""),
+                                "source": used_doc_name or "Uploaded Document",
+                                "page": 1,
+                                "snippet": doc_context[:400],
+                                "relevance": 0.9,
+                            }
+                        ]
+                        grounded_prompt = f"{ACADEMIC_SOLVER_PROMPT}\n\nCONTEXT FROM UPLOADED DOCUMENT ({used_doc_name}):\n{doc_context}"
+                        pqa_result = await general_chat(
+                            question=question,
+                            system_prompt=grounded_prompt,
+                            chat_history=chat_history,
+                            image_data=doc_img,
+                            req_id=req_id,
+                        )
+                    elif doc_img:
+                        citations = [
+                            {
+                                "id": str(uuid.uuid4()),
+                                "doc_id": getattr(user_docs[0], "id", ""),
+                                "source": used_doc_name or "Uploaded Image",
+                                "page": 1,
+                                "snippet": f"Analyzed directly from uploaded image: {used_doc_name}",
+                                "relevance": 1.0,
+                            }
+                        ]
+                        grounded_prompt = f"{ACADEMIC_SOLVER_PROMPT}\n\nThe user uploaded an image '{used_doc_name}'. Inspect the image and answer the user question thoroughly."
+                        pqa_result = await general_chat(
+                            question=question,
+                            system_prompt=grounded_prompt,
+                            chat_history=chat_history,
+                            image_data=doc_img,
+                            req_id=req_id,
+                        )
+                    else:
+                        pqa_result = await general_chat(
+                            question=question,
+                            chat_history=chat_history,
+                            req_id=req_id,
+                        )
 
             else:
                 pqa_result = await general_chat(
@@ -717,16 +780,87 @@ async def ask_question_stream(
                                 yield _sse({"type": "token", "content": payload})
 
                     else:
-                        async for chunk in general_chat_stream(
-                            question, chat_history=chat_history, req_id=req_id
-                        ):
-                            event_type, payload = chunk if isinstance(chunk, tuple) else ("token", chunk)
-                            if event_type == "reset":
-                                answer_text = ""
-                                yield _sse({"type": "reset"})
-                            elif event_type == "token":
-                                answer_text += payload
-                                yield _sse({"type": "token", "content": payload})
+                        # Fallback: Check if any uploaded document has sidecar OCR text or is an image file
+                        doc_context = ""
+                        doc_img = None
+                        used_doc_name = ""
+                        for d in user_docs:
+                            fpath = getattr(d, "file_path", "")
+                            if not fpath:
+                                continue
+                            p = Path(fpath)
+                            sidecar_ocr = p.with_name(f"{p.stem}_ocr.txt")
+                            if sidecar_ocr.exists():
+                                try:
+                                    t = sidecar_ocr.read_text(encoding="utf-8", errors="ignore").strip()
+                                    if t and not t.startswith("[Image Document:"):
+                                        doc_context = t[:6000]
+                                        used_doc_name = d.name
+                                        break
+                                except Exception:
+                                    pass
+                            if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and p.exists():
+                                doc_img = str(p)
+                                used_doc_name = d.name
+                                break
+
+                        if doc_context:
+                            status = "success"
+                            citations = [
+                                {
+                                    "id": str(uuid.uuid4()),
+                                    "doc_id": getattr(user_docs[0], "id", ""),
+                                    "source": used_doc_name or "Uploaded Document",
+                                    "page": 1,
+                                    "snippet": doc_context[:400],
+                                    "relevance": 0.9,
+                                }
+                            ]
+                            grounded_prompt = f"{ACADEMIC_SOLVER_PROMPT}\n\nCONTEXT FROM UPLOADED DOCUMENT ({used_doc_name}):\n{doc_context}"
+                            async for chunk in general_chat_stream(
+                                question, system_prompt=grounded_prompt, chat_history=chat_history, image_data=doc_img, req_id=req_id
+                            ):
+                                event_type, payload = chunk if isinstance(chunk, tuple) else ("token", chunk)
+                                if event_type == "reset":
+                                    answer_text = ""
+                                    yield _sse({"type": "reset"})
+                                elif event_type == "token":
+                                    answer_text += payload
+                                    yield _sse({"type": "token", "content": payload})
+                        elif doc_img:
+                            status = "success"
+                            citations = [
+                                {
+                                    "id": str(uuid.uuid4()),
+                                    "doc_id": getattr(user_docs[0], "id", ""),
+                                    "source": used_doc_name or "Uploaded Image",
+                                    "page": 1,
+                                    "snippet": f"Analyzed directly from uploaded image: {used_doc_name}",
+                                    "relevance": 1.0,
+                                }
+                            ]
+                            grounded_prompt = f"{ACADEMIC_SOLVER_PROMPT}\n\nThe user uploaded an image '{used_doc_name}'. Inspect the image and answer the user question thoroughly."
+                            async for chunk in general_chat_stream(
+                                question, system_prompt=grounded_prompt, chat_history=chat_history, image_data=doc_img, req_id=req_id
+                            ):
+                                event_type, payload = chunk if isinstance(chunk, tuple) else ("token", chunk)
+                                if event_type == "reset":
+                                    answer_text = ""
+                                    yield _sse({"type": "reset"})
+                                elif event_type == "token":
+                                    answer_text += payload
+                                    yield _sse({"type": "token", "content": payload})
+                        else:
+                            async for chunk in general_chat_stream(
+                                question, chat_history=chat_history, req_id=req_id
+                            ):
+                                event_type, payload = chunk if isinstance(chunk, tuple) else ("token", chunk)
+                                if event_type == "reset":
+                                    answer_text = ""
+                                    yield _sse({"type": "reset"})
+                                elif event_type == "token":
+                                    answer_text += payload
+                                    yield _sse({"type": "token", "content": payload})
 
                 else:
                     yield _sse({"type": "phase", "phase": "generating"})

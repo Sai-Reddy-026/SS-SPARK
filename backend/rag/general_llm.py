@@ -32,6 +32,7 @@ FIRST_TOKEN_TIMEOUT_S = 3.5
 
 # Model definitions per provider
 GEMINI_MODELS = [
+    "gemini/gemini-3.5-flash-lite",
     "gemini/gemini-3.5-flash",
     "gemini/gemini-3.6-flash",
     "gemini/gemini-3.7-flash",
@@ -243,7 +244,13 @@ async def vision_chat(
         prompt_parts.append(f"USER QUESTION: {question}")
         prompt_parts.append(pil_img)
 
-        models_to_try = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]
+        models_to_try = [
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+            "gemini-3.8-flash",
+        ]
         for m_name in models_to_try:
             try:
                 model = genai.GenerativeModel(m_name)
@@ -282,7 +289,7 @@ async def vision_chat(
                 ],
             }
         ]
-        for model in ["gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
+        for model in ["gemini/gemini-3.5-flash-lite", "gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
             try:
                 logger.info("%svision_litellm_fallback model=%s", tag, model)
                 resp = await litellm.acompletion(model=model, messages=vision_messages, max_tokens=2048, timeout=30.0)
@@ -352,7 +359,13 @@ async def vision_chat_stream(
         prompt_parts.append(f"USER QUESTION: {question}")
         prompt_parts.append(pil_img)
 
-        models_to_try = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]
+        models_to_try = [
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+            "gemini-3.8-flash",
+        ]
         yielded_any = False
         for m_name in models_to_try:
             try:
@@ -393,7 +406,7 @@ async def vision_chat_stream(
                 ],
             }
         ]
-        for model in ["gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
+        for model in ["gemini/gemini-3.5-flash-lite", "gemini/gemini-3.5-flash", "gemini/gemini-3.6-flash"]:
             try:
                 logger.info("%svision_stream_litellm_fallback model=%s", tag, model)
                 fb_stream = await litellm.acompletion(

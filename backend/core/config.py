@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic Claude API key")
     NVIDIA_API_KEY: str = Field(default="", description="NVIDIA NIM API key")
     NVIDIA_NIM_API_KEY: str = Field(default="", description="NVIDIA NIM API key (alias)")
+    OPENROUTER_API_KEY: str = Field(default="", description="OpenRouter API key")
 
     # ------------------------------------------------------------------ #
     # JWT Authentication
@@ -223,10 +224,16 @@ class Settings(BaseSettings):
         return bool(self.NVIDIA_API_KEY or self.NVIDIA_NIM_API_KEY)
 
     @property
+    def has_openrouter(self) -> bool:
+        return bool(self.OPENROUTER_API_KEY and self.OPENROUTER_API_KEY.strip())
+
+    @property
     def primary_llm_provider(self) -> str:
         """Return the primary provider name based on active keys."""
         if self.has_gemini:
             return "gemini"
+        if self.has_openrouter:
+            return "openrouter"
         if self.has_nvidia:
             return "nvidia"
         if self.has_openai:
@@ -238,18 +245,23 @@ class Settings(BaseSettings):
     @property
     def fallback_llm_provider(self) -> str:
         """Return the fallback provider name based on active keys."""
+        if self.has_gemini and self.has_openrouter:
+            return "openrouter"
         if self.has_gemini and self.has_nvidia:
             return "nvidia"
-        if (self.has_gemini or self.has_nvidia) and self.has_openai:
+        if (self.has_gemini or self.has_openrouter or self.has_nvidia) and self.has_openai:
             return "openai"
         return "none"
 
     @property
     def has_any_llm_key(self) -> bool:
-        return self.has_openai or self.has_gemini or self.has_anthropic or self.has_nvidia
+        return self.has_openai or self.has_gemini or self.has_anthropic or self.has_nvidia or self.has_openrouter
 
     def apply_to_env(self) -> None:
         """Push API keys back into os.environ so PaperQA and LiteLLM pick them up."""
+        if self.OPENROUTER_API_KEY:
+            os.environ["OPENROUTER_API_KEY"] = self.OPENROUTER_API_KEY
+
         if self.OPENAI_API_KEY:
             os.environ["OPENAI_API_KEY"] = self.OPENAI_API_KEY
         

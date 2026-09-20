@@ -45,6 +45,11 @@ NVIDIA_MODELS = [
     "nvidia_nim/meta/llama-3.1-70b-instruct",
 ]
 
+OPENROUTER_MODELS = [
+    "openrouter/meta-llama/llama-3.3-70b-instruct",
+    "openrouter/deepseek/deepseek-chat",
+]
+
 OPENAI_MODELS = [
     "gpt-4o-mini",
     "gpt-4o",
@@ -69,7 +74,7 @@ def get_model_tiers() -> Dict[str, List[str]]:
     """
     Return available models grouped by tier:
       - 'primary': Gemini models if GEMINI_API_KEY/GOOGLE_API_KEY is available
-      - 'fallback': NVIDIA models if NVIDIA_API_KEY/NVIDIA_NIM_API_KEY is available
+      - 'fallback': OpenRouter models (if OPENROUTER_API_KEY) and NVIDIA NIM models (if NVIDIA_API_KEY)
       - 'tertiary': OpenAI / Anthropic models if available
     """
     _ensure_env_synced()
@@ -80,6 +85,7 @@ def get_model_tiers() -> Dict[str, List[str]]:
     }
 
     gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+    openrouter_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
     nvidia_key = (os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or "").strip()
     openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     anthropic_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
@@ -88,7 +94,9 @@ def get_model_tiers() -> Dict[str, List[str]]:
     if gemini_key:
         tiers["primary"].extend(GEMINI_MODELS)
 
-    # 2. Fallback: NVIDIA NIM
+    # 2. Fallback: OpenRouter (fast, reliable) & NVIDIA NIM
+    if openrouter_key:
+        tiers["fallback"].extend(OPENROUTER_MODELS)
     if nvidia_key:
         tiers["fallback"].extend(NVIDIA_MODELS)
 
@@ -98,7 +106,7 @@ def get_model_tiers() -> Dict[str, List[str]]:
     if anthropic_key:
         tiers["tertiary"].extend(ANTHROPIC_MODELS)
 
-    # If Gemini is missing but NVIDIA is available, promote NVIDIA to primary
+    # If Gemini is missing but fallback is available, promote fallback to primary
     if not tiers["primary"]:
         if tiers["fallback"]:
             tiers["primary"] = tiers["fallback"]
@@ -122,7 +130,7 @@ def get_ordered_candidate_models() -> List[str]:
 
     if not models:
         raise RuntimeError(
-            "No LLM API key configured. Please set GEMINI_API_KEY or NVIDIA_API_KEY in backend/.env"
+            "No LLM API key configured. Please set GEMINI_API_KEY or OPENROUTER_API_KEY in backend/.env"
         )
     return models
 
@@ -552,15 +560,16 @@ async def general_chat_stream(
     primary_attempted = False
 
     for model_idx, model in enumerate(candidate_models):
-        is_gemini = "gemini" in model
+        is_gemini = "gemini" in model and "openrouter" not in model
+        is_openrouter = "openrouter" in model
         is_nvidia = "nvidia" in model
-        provider_name = "gemini" if is_gemini else ("nvidia" if is_nvidia else "tertiary")
+        provider_name = "gemini" if is_gemini else ("openrouter" if is_openrouter else ("nvidia" if is_nvidia else "tertiary"))
 
         if is_gemini:
             logger.info("%sllm_start provider=gemini model=%s", tag, model)
             primary_attempted = True
-        elif is_nvidia and primary_attempted:
-            logger.info("%sfallback provider=nvidia model=%s", tag, model)
+        elif (is_openrouter or is_nvidia) and primary_attempted:
+            logger.info("%sfallback provider=%s model=%s", tag, provider_name, model)
         else:
             logger.info("%sllm_start provider=%s model=%s", tag, provider_name, model)
 

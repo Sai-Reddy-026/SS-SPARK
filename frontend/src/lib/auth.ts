@@ -284,20 +284,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
   };
 
-  const logout = async () => {
+  const logout = () => {
+    // Clear auth state immediately — don't wait for the backend (avoids Render cold-start delay).
     const access = getStoredAccessToken();
-    try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
-        method: "POST",
-        headers: access ? { Authorization: `Bearer ${access}` } : {},
-      });
-    } catch {
-      // Ignore network errors on logout
-    }
     clearStoredAuth();
     setUser(null);
     setTokensState(null);
     setIsGuestState(false);
+    // Fire-and-forget: revoke refresh tokens on backend without blocking the UI.
+    fetch(`${API_BASE}/api/auth/logout`, {
+      method: "POST",
+      headers: access ? { Authorization: `Bearer ${access}` } : {},
+    }).catch(() => {
+      // Ignore — client is already logged out locally
+    });
+    return Promise.resolve();
   };
 
   const setGuest = () => {

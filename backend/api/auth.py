@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 
@@ -403,12 +403,17 @@ async def verify_email(req: VerifyEmailRequest):
 
 
 @router.post("/logout")
-async def logout(current_user: Optional[UserRecord] = Depends(get_optional_user)):
-    """Log out current user and revoke their refresh tokens."""
+async def logout(
+    background_tasks: BackgroundTasks,
+    current_user: Optional[UserRecord] = Depends(get_optional_user),
+):
+    """Log out current user — returns instantly; token revocation runs in the background."""
     if current_user:
+        user_id = current_user.id
         new_ver = getattr(current_user, "token_version", 1) + 1
-        await update_user(current_user.id, {"token_version": new_ver})
-        await record_audit_log(current_user.id, LogAction.LOGOUT, "User logged out")
+        # Defer DB writes so the HTTP response is returned immediately
+        background_tasks.add_task(update_user, user_id, {"token_version": new_ver})
+        background_tasks.add_task(record_audit_log, user_id, LogAction.LOGOUT, "User logged out")
     return {
         "success": True,
         "message": "Logged out successfully.",
@@ -419,7 +424,6 @@ async def logout(current_user: Optional[UserRecord] = Depends(get_optional_user)
 # OAuth Endpoints
 # --------------------------------------------------------------------------- #
 
-from fastapi import Request
 from fastapi.responses import RedirectResponse
 import urllib.parse
 import httpx

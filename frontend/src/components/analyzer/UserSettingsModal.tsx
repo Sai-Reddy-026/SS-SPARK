@@ -104,12 +104,12 @@ export function UserSettingsModal({
     }
   }
 
-  // Handle Logout
-  async function handleLogout() {
+  // Handle Logout — synchronous: clear state first, navigate immediately
+  function handleLogout() {
+    logout(); // instant: clears local storage + state, fires backend revocation in background
     onOpenChange(false);
-    await logout();
-    toast.success("Logged out successfully.");
     navigate({ to: "/login" });
+    toast.success("Logged out successfully.");
   }
 
   // Handle Add Another Account

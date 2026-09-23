@@ -27,8 +27,8 @@ export function AdminSidebar({ currentPath = "" }: AdminSidebarProps) {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
 
-  const handleLogout = async () => {
-    await logout();
+  const handleLogout = () => {
+    logout(); // instant: clears auth state, backend revocation runs in background
     toast.success("Logged out");
     navigate({ to: "/login" });
   };

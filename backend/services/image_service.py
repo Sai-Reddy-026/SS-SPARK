@@ -172,7 +172,7 @@ def extract_structured_question_paper(
             "If there are no explicit question numbers, extract the problems or paragraphs into the questions list with q_num 'Q1', 'Q2', etc."
         )
 
-        models_to_try = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-1.5-pro"]
+        models_to_try = ["gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.6-flash", "gemini-flash-lite-latest", "gemini-3.5-flash"]
         for m_name in models_to_try:
             try:
                 model = genai.GenerativeModel(m_name)
@@ -235,7 +235,7 @@ def extract_structured_question_paper(
                 ],
             }
         ]
-        for model in ["gemini/gemini-2.0-flash-lite", "gemini/gemini-2.0-flash", "gemini/gemini-1.5-flash"]:
+        for model in ["openrouter/google/gemini-3.1-flash-lite-image", "gemini/gemini-3.5-flash-lite", "gemini/gemini-flash-latest"]:
             try:
                 import asyncio
                 resp = litellm.completion(model=model, messages=vision_messages, max_tokens=2048, timeout=30.0)
@@ -288,7 +288,7 @@ def extract_text_hybrid(image_or_path: Any, lang: Optional[str] = None) -> Tuple
                 "Transcribe all readable text from this document image with high fidelity. "
                 "Preserve question numbering, tables, sections, and format math equations in LaTeX."
             )
-            for m_name in ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-1.5-pro"]:
+            for m_name in ["gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-3.6-flash"]:
                 try:
                     model = genai.GenerativeModel(m_name)
                     res = model.generate_content([prompt, pil_img])
@@ -317,9 +317,9 @@ def extract_text_hybrid(image_or_path: Any, lang: Optional[str] = None) -> Tuple
                 ],
             }
         ]
-        for model in ["gemini/gemini-2.0-flash-lite", "gemini/gemini-2.0-flash", "gemini/gemini-1.5-flash"]:
+        for model in ["openrouter/google/gemini-3.1-flash-lite-image", "gemini/gemini-3.5-flash-lite", "gemini/gemini-flash-latest"]:
             try:
-                resp = litellm.completion(model=model, messages=vision_messages, max_tokens=2048, timeout=30.0)
+                resp = litellm.completion(model=model, messages=vision_messages, max_tokens=2048, timeout=15.0)
                 out = resp.choices[0].message.content or ""
                 if out.strip():
                     return out.strip(), 92.0, True

@@ -68,6 +68,7 @@ def _build_settings():
 
     openai_key = cfg.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
     gemini_key = cfg.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+    openrouter_key = cfg.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY", "")
     anthropic_key = cfg.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY", "")
     nvidia_key = cfg.NVIDIA_API_KEY or os.getenv("NVIDIA_API_KEY", "") or os.getenv("NVIDIA_NIM_API_KEY", "")
 
@@ -79,14 +80,18 @@ def _build_settings():
     else:
         embed_name = "st-all-MiniLM-L6-v2"
 
-    # Pick the best available LLM (Gemini Primary -> NVIDIA Fallback -> OpenAI -> Anthropic)
+    # Pick the best available LLM (Gemini Primary -> OpenRouter Fallback -> NVIDIA -> OpenAI -> Anthropic)
     if gemini_key:
-        llm_name = "gemini/gemini-2.0-flash-lite"
+        llm_name = "gemini/gemini-3.5-flash-lite"
         os.environ["GEMINI_API_KEY"] = gemini_key
         os.environ["GOOGLE_API_KEY"] = gemini_key  # litellm also reads GOOGLE_API_KEY
         logger.info("PaperQA connector: using Gemini (model=%s)", llm_name)
+    elif openrouter_key:
+        llm_name = "openrouter/deepseek/deepseek-chat"
+        os.environ["OPENROUTER_API_KEY"] = openrouter_key
+        logger.info("PaperQA connector: using OpenRouter (model=%s)", llm_name)
     elif nvidia_key:
-        llm_name = "nvidia_nim/meta/llama-3.1-8b-instruct"
+        llm_name = "nvidia_nim/meta/llama-3.2-11b-vision-instruct"
         os.environ["NVIDIA_API_KEY"] = nvidia_key
         os.environ["NVIDIA_NIM_API_KEY"] = nvidia_key
         logger.info("PaperQA connector: using NVIDIA NIM (model=%s)", llm_name)

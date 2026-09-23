@@ -1,32 +1,175 @@
 services:
-  # ── SS SPARK Backend API ────────────────────────────────────
-  backend:
+  # ────────────────────────────────────────────────────────────
+  # MONOLITH (original) — kept for reference and rollback only.
+  # To use the monolith instead of microservices, uncomment this
+  # block and comment out the microservices section below.
+  # ────────────────────────────────────────────────────────────
+  # backend:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - MONGO_URI=mongodb://mongodb:27017
+  #     - MONGO_DB_NAME=ss_spark
+  #     - USE_QDRANT=true
+  #     - QDRANT_HOST=qdrant
+  #     - QDRANT_PORT=6333
+  #     - FRONTEND_URL=${FRONTEND_URL:-https://ss-spark.vercel.app}
+  #     - JWT_SECRET_KEY=${JWT_SECRET_KEY:-please-set-a-strong-random-secret-in-production-min-32-chars}
+  #     - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+  #     - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+  #     - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+  #     - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+  #     - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+  #     - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+  #   volumes:
+  #     - ./backend/uploads:/app/backend/uploads
+  #     - ./backend/chroma_db:/app/backend/chroma_db
+  #   depends_on:
+  #     - mongodb
+  #     - qdrant
+  #   restart: unless-stopped
+
+  # ────────────────────────────────────────────────────────────
+  # MICROSERVICES ARCHITECTURE
+  # ────────────────────────────────────────────────────────────
+
+  # ── API Gateway (Nginx) ────────────────────────────────────
+  # Single entry point for all frontend/client traffic.
+  # Routes by URL prefix to the correct microservice.
+  # External port 8000 is preserved — no frontend changes needed.
+  gateway:
     build:
-      context: .
+      context: ./services/gateway
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8000:80"
+    depends_on:
+      - auth-service
+      - document-service
+      - chat-service
+    restart: unless-stopped
+
+  # ── Auth Service ───────────────────────────────────────────
+  # Handles: /api/auth/*, /api/users/*, /api/notifications/*
+  # Domain: Identity — authentication, user profiles, notifications
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
     environment:
-      - MONGO_URI=mongodb://mongodb:27017
-      - MONGO_DB_NAME=ss_spark
-      - USE_QDRANT=true
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-ss_spark}
+      - FRONTEND_URL=${FRONTEND_URL:-https://ss-spark.vercel.app}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-please-set-a-strong-random-secret-in-production-min-32-chars}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-log}
+      - EMAIL_FROM=${EMAIL_FROM:-noreply@ssspark.ai}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  # ── Document Service ───────────────────────────────────────
+  # Handles: POST /api/upload, /api/documents/*, /uploads/*
+  # Domain: Content — document ingestion, OCR, vector indexing, RAG
+  document-service:
+    build:
+      context: ./services/document-service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-ss_spark}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-please-set-a-strong-random-secret-in-production-min-32-chars}
+      - USE_QDRANT=${USE_QDRANT:-false}
+      - QDRANT_HOST=${QDRANT_HOST:-qdrant}
+      - QDRANT_PORT=${QDRANT_PORT:-6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-ss_spark_chunks}
+      - CHROMA_COLLECTION=${CHROMA_COLLECTION:-ss_spark_chunks}
+      - CHUNK_SIZE=500
+      - CHUNK_OVERLAP=50
+      - OCR_LANG=eng
+      - OCR_DPI=200
+      - MAX_FILE_SIZE_MB=50
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
     volumes:
-      - ./backend/uploads:/app/backend/uploads
-      - ./backend/chroma_db:/app/backend/chroma_db
+      - uploads_data:/app/uploads
+      - chroma_data:/app/chroma_db
     depends_on:
       - mongodb
       - qdrant
     restart: unless-stopped
+
+  # ── Chat Service ───────────────────────────────────────────
+  # Handles: /api/chat, /api/history, /api/sessions/*, /api/analytics/*, /api/admin/*
+  # Domain: Conversation — RAG Q&A, sessions, analytics, admin panel
+  chat-service:
+    build:
+      context: ./services/chat-service
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URI=${MONGO_URI:-mongodb://mongodb:27017}
+      - MONGO_DB_NAME=${MONGO_DB_NAME:-ss_spark}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-please-set-a-strong-random-secret-in-production-min-32-chars}
+      - USE_QDRANT=${USE_QDRANT:-false}
+      - QDRANT_HOST=${QDRANT_HOST:-qdrant}
+      - QDRANT_PORT=${QDRANT_PORT:-6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-ss_spark_chunks}
+      - CHROMA_COLLECTION=${CHROMA_COLLECTION:-ss_spark_chunks}
+      - CHUNK_SIZE=500
+      - CHUNK_OVERLAP=50
+      - TOP_K_RESULTS=5
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - FRONTEND_URL=${FRONTEND_URL:-https://ss-spark.vercel.app}
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-log}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+    volumes:
+      - uploads_data:/app/uploads
+      - chroma_data:/app/chroma_db
+    depends_on:
+      - mongodb
+      - qdrant
+    restart: unless-stopped
+
 
   # ── MongoDB Database ────────────────────────────────────────
   mongodb:
@@ -50,3 +193,5 @@ services:
 volumes:
   mongo_data:
   qdrant_data:
+  uploads_data:
+  chroma_data:

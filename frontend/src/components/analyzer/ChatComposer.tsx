@@ -180,7 +180,7 @@ export function ChatComposer({
   const canSend = !loading && (value.trim().length > 0 || attachedFile !== null);
 
   return (
-    <div className="relative z-20 px-3 pb-5 pt-2 sm:px-6">
+    <div className="relative z-20 px-3 pb-3.5 pt-1.5 sm:px-6">
       <div className="mx-auto max-w-3xl">
         {/* Composer container with Drag-and-Drop */}
         <div
@@ -297,7 +297,7 @@ export function ChatComposer({
                 ? "Ask a question (e.g. 'Solve Q2', 'Solve all questions step by step')..."
                 : "Ask anything about your question papers or syllabus... (Paste screenshots with Ctrl+V)"
             }
-            className="max-h-48 min-h-[54px] resize-none border-0 bg-transparent px-4 py-3.5 text-[0.95rem] text-slate-100 shadow-none focus-visible:ring-0 placeholder:text-slate-500"
+            className="max-h-48 min-h-[48px] resize-none border-0 bg-transparent px-4 py-2.5 text-[0.92rem] text-slate-100 shadow-none focus-visible:ring-0 placeholder:text-slate-500"
           />
 
           {/* Bottom toolbar */}
@@ -361,7 +361,7 @@ export function ChatComposer({
         </div>
 
         {/* Footer disclaimer */}
-        <p className="mt-2 text-center text-[10px] font-mono text-slate-500">
+        <p className="mt-1.5 text-center text-[10px] font-mono text-slate-500">
           SS SPARK · Grounded in your uploaded exam papers, textbooks & syllabi
         </p>
       </div>

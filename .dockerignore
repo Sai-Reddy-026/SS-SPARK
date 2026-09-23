@@ -1,0 +1,54 @@
+# ============================================================
+# SS SPARK — Dockerignore (Protects Secrets & Build Context)
+# ============================================================
+
+# Git metadata
+.git
+.github
+
+# Environment files and credentials (CRITICAL: Never copy to image)
+.env
+.env.*
+*.env
+*.pem
+*.key
+!.env.example
+!**/.env.example
+
+# Frontend (Backend Docker image does not need frontend source/node_modules)
+frontend/
+node_modules/
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local databases, uploads, and transient files
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/chroma_db/
+chroma_db/
+qdrant_data/
+mongo_data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

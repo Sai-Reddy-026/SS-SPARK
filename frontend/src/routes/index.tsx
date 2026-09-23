@@ -2,21 +2,18 @@ import { useEffect, useMemo, useRef, useState, useCallback, lazy, Suspense } fro
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalyzerSidebar, type SidebarChat } from "@/components/analyzer/AnalyzerSidebar";
 import { Navbar } from "@/components/analyzer/Navbar";
 import { ChatMessage, TypingIndicator } from "@/components/analyzer/ChatMessage";
 import { ChatComposer, type AttachedFile } from "@/components/analyzer/ChatComposer";
-import { UploadCard, ImagePreviewCard } from "@/components/analyzer/UploadCard";
 import { UploadDropzone } from "@/components/analyzer/UploadDropzone";
 import {
   kindFromName,
-  sampleAnswer,
-  sampleCitations,
   typeLabel,
   type ChatMessageData,
   type UploadedDoc,
 } from "@/lib/analyzer";
+
 import { useAuth } from "@/lib/auth";
 import {
   chatApi,
@@ -25,7 +22,7 @@ import {
   type SessionResponse,
   type StreamMeta,
 } from "@/lib/api";
-import { BookOpen, BrainCircuit, Code2, FileText, Sparkles, Zap } from "lucide-react";
+import { BookOpen, Code2, Sparkles, Zap } from "lucide-react";
 import { Atmosphere, ParticleField, SparkCore, GlassCard } from "@/components/astra";
 
 // Code-split heavy chart and modal dependencies
@@ -260,8 +257,6 @@ function AnalyzerPage() {
     };
   }, []);
 
-  const imageDocs = useMemo(() => docs.filter((doc) => doc.kind === "image"), [docs]);
-  const fileDocs = useMemo(() => docs.filter((doc) => doc.kind !== "image"), [docs]);
 
   // Convert SessionResponse to SidebarChat
   const sidebarChats = useMemo<SidebarChat[]>(() => {
@@ -659,22 +654,22 @@ function AnalyzerPage() {
         <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
           {/* ── Empty / Welcome state — Astra 3D Cinematic Core ── */}
           {!hasMessages && !loading && (
-            <div className="flex h-full flex-col items-center justify-center px-4 py-12 text-center select-none">
+            <div className="flex h-full flex-col items-center justify-center px-4 py-8 text-center select-none">
               {/* Central Floating 3D Spark Core */}
-              <div className="animate-scale-in relative mb-5">
+              <div className="animate-scale-in relative mb-3">
                 <SparkCore mouseX={mousePos.x} mouseY={mousePos.y} variant="ambient" showBadges={false} />
               </div>
 
               {/* Headline with shimmer */}
-              <h1 className="animate-fade-up text-3xl font-extrabold tracking-tight sm:text-4xl text-white font-display" style={{ animationDelay: '80ms' }}>
+              <h1 className="animate-fade-up text-2xl font-extrabold tracking-tight sm:text-3xl text-white font-display" style={{ animationDelay: '80ms' }}>
                 What would you like to <span className="gradient-text">explore</span>?
               </h1>
-              <p className="animate-fade-up mx-auto mt-2.5 max-w-md text-xs sm:text-sm leading-relaxed text-slate-400" style={{ animationDelay: '160ms' }}>
+              <p className="animate-fade-up mx-auto mt-1.5 max-w-md text-xs sm:text-sm leading-relaxed text-slate-400" style={{ animationDelay: '160ms' }}>
                 Step-by-step solutions, exam pattern predictions, and formulas verified strictly against your uploaded documents.
               </p>
 
               {/* Suggested prompts with GlassCard */}
-              <div className="stagger-children mt-7 grid w-full max-w-xl gap-3 sm:grid-cols-2">
+              <div className="stagger-children mt-5 grid w-full max-w-lg gap-2.5 sm:grid-cols-2">
                 {SUGGESTED_PROMPTS.map(({ text, icon: PromptIcon }) => (
                   <GlassCard
                     key={text}
@@ -683,36 +678,21 @@ function AnalyzerPage() {
                       setInput(text);
                       setTimeout(() => sendMessage(text), 50);
                     }}
-                    className="p-3.5 flex items-start gap-3 text-left"
+                    className="p-3 flex items-start gap-2.5 text-left"
                   >
-                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-sky-500/15 text-sky-400 border border-sky-400/25">
-                      <PromptIcon className="h-3.5 w-3.5" />
+                    <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-sky-500/15 text-sky-400 border border-sky-400/25">
+                      <PromptIcon className="h-3 w-3" />
                     </span>
                     <span className="text-xs text-slate-300 leading-snug font-medium">{text}</span>
                   </GlassCard>
                 ))}
               </div>
-
-              {/* Document count indicator */}
-              {docs.length > 0 && (
-                <button
-                  onClick={() => setSearchPadOpen(true)}
-                  className="animate-fade-up mt-6 flex items-center gap-2 rounded-full border border-sky-400/25 bg-sky-950/40 px-4 py-1.5 text-xs text-sky-200 backdrop-blur-md transition-all hover:border-sky-400/50 hover:shadow-[0_0_15px_rgba(56,189,248,0.15)] cursor-pointer"
-                  style={{ animationDelay: '400ms' }}
-                >
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-400" />
-                  </span>
-                  <span className="font-mono text-[11px]">{docs.length} source{docs.length !== 1 ? "s" : ""} loaded · Open Search Pad</span>
-                </button>
-              )}
             </div>
           )}
 
           {/* ── Chat messages ── */}
           {(hasMessages || loading) && (
-            <div className="mx-auto w-full max-w-3xl space-y-6 px-1 py-6 sm:px-2">
+            <div className="mx-auto w-full max-w-3xl space-y-4 px-2 py-4 sm:px-3">
               {messages.map((message) => (
                 <ChatMessage
                   key={message.id}
@@ -723,54 +703,6 @@ function AnalyzerPage() {
               {loading && !messages.some((m) => m.isStreaming) && (
                 <TypingIndicator phase={streamingPhase} />
               )}
-            </div>
-          )}
-
-          {/* ── Documents panel (shown when docs exist and no messages yet) ── */}
-          {!hasMessages && !loading && docs.length > 0 && (
-            <div className="mx-auto w-full max-w-3xl px-4 pb-6">
-              <Tabs defaultValue="documents">
-                <TabsList className="w-full">
-                  <TabsTrigger value="documents" className="flex-1">
-                    Documents ({fileDocs.length})
-                  </TabsTrigger>
-                  <TabsTrigger value="images" className="flex-1">
-                    Images ({imageDocs.length})
-                  </TabsTrigger>
-                  <TabsTrigger value="upload" className="flex-1">
-                    Add files
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent value="documents" className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {fileDocs.map((doc) => (
-                    <UploadCard
-                      key={doc.id}
-                      doc={doc}
-                      onDelete={() => removeDoc(doc.id)}
-                    />
-                  ))}
-                  {fileDocs.length === 0 && (
-                    <p className="text-xs text-muted-foreground">No documents yet.</p>
-                  )}
-                </TabsContent>
-                <TabsContent value="images" className="mt-3 grid gap-2 sm:grid-cols-3">
-                  {imageDocs.map((doc) => (
-                    <ImagePreviewCard
-                      key={doc.id}
-                      doc={doc}
-                      onDelete={() => removeDoc(doc.id)}
-                    />
-                  ))}
-                  {imageDocs.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      Upload a photo of a handwritten or printed paper.
-                    </p>
-                  )}
-                </TabsContent>
-                <TabsContent value="upload" className="mt-3">
-                  <UploadDropzone onFiles={addFiles} compact />
-                </TabsContent>
-              </Tabs>
             </div>
           )}
 

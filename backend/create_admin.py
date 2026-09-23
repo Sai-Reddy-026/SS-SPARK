@@ -118,7 +118,7 @@ async def main():
     print(f"    - Role:     admin")
     print(f"    - Status:   active")
     print(f"    - Security: Password hashed (bcrypt + SHA-256)")
-    print(f"    - Portal:   http://localhost:8080/admin (or /login)")
+    print(f"    - Portal:   {cfg.FRONTEND_URL.rstrip('/')}/admin (or /login)")
 
 
 if __name__ == "__main__":

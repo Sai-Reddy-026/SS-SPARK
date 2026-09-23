@@ -1,0 +1,58 @@
+﻿# ============================================================
+# SS SPARK — Chat Service Requirements
+# ============================================================
+
+# ── Web Framework ────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+
+# ── Configuration ────────────────────────────────────────────
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+
+# ── PaperQA dependencies ─────────────────────────────────────
+anyio
+html2text
+httpx
+numpy
+rich
+tenacity
+tiktoken>=0.4.0
+
+# ── LLM API Clients ──────────────────────────────────────────
+litellm>=1.0.0
+openai>=1.30.0
+google-generativeai>=0.7.0
+anthropic>=0.28.0
+
+# ── Vector Database ──────────────────────────────────────────
+qdrant-client>=1.9.0
+chromadb>=0.5.0
+
+# ── PDF / Document (needed by admin re-index and chat context) ─
+pymupdf>=1.24.0
+python-docx>=1.1.0
+python-pptx>=0.6.23
+pillow>=10.3.0
+pytesseract>=0.3.13
+
+# ── Database ─────────────────────────────────────────────────
+motor>=3.4.0
+pymongo>=4.7.0
+
+# ── Authentication ───────────────────────────────────────────
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.0.0
+
+# ── Utilities ────────────────────────────────────────────────
+aiofiles>=23.2.1
+
+# ── Streaming (Server-Sent Events) ───────────────────────────
+sse-starlette>=2.1.0
+
+# ── Async Email ───────────────────────────────────────────────
+aiosmtplib>=3.0.0
+
+# ── Hybrid Search ────────────────────────────────────────────
+rank-bm25>=0.2.2

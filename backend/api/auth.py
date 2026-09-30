@@ -425,10 +425,24 @@ async def logout(
 # --------------------------------------------------------------------------- #
 
 from fastapi.responses import RedirectResponse
+import asyncio
 import urllib.parse
 import httpx
 from core.config import get_settings
 from database.user_models import get_user_by_provider
+
+# Reusable HTTP client — avoids TCP connection setup overhead per OAuth request
+_oauth_http_client: Optional[httpx.AsyncClient] = None
+
+def _get_oauth_client() -> httpx.AsyncClient:
+    """Return a module-level reusable httpx client with connection pooling."""
+    global _oauth_http_client
+    if _oauth_http_client is None or _oauth_http_client.is_closed:
+        _oauth_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _oauth_http_client
 
 
 @router.get("/oauth/config")
@@ -490,78 +504,87 @@ async def oauth_google_callback(request: Request, code: Optional[str] = None, er
     redirect_uri = _build_oauth_redirect_uri(request)
 
     try:
-        async with httpx.AsyncClient() as client:
-            token_resp = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "code": code,
-                    "client_id": cfg.GOOGLE_CLIENT_ID,
-                    "client_secret": cfg.GOOGLE_CLIENT_SECRET,
-                    "redirect_uri": redirect_uri,
-                    "grant_type": "authorization_code",
-                },
-            )
-            if token_resp.status_code != 200:
-                logger.error("Google token exchange failed: %s", token_resp.text)
-                return RedirectResponse(url=f"{frontend_url}/login?error=Google+token+exchange+failed")
+        client = _get_oauth_client()
+        token_resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": cfg.GOOGLE_CLIENT_ID,
+                "client_secret": cfg.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+        if token_resp.status_code != 200:
+            logger.error("Google token exchange failed: %s", token_resp.text)
+            return RedirectResponse(url=f"{frontend_url}/login?error=Google+token+exchange+failed")
 
-            token_data = token_resp.json()
-            access_tok = token_data.get("access_token")
+        token_data = token_resp.json()
+        access_tok = token_data.get("access_token")
 
-            userinfo_resp = await client.get(
-                "https://www.googleapis.com/oauth2/v2/userinfo",
-                headers={"Authorization": f"Bearer {access_tok}"},
-            )
-            if userinfo_resp.status_code != 200:
-                logger.error("Google userinfo fetch failed: %s", userinfo_resp.text)
-                return RedirectResponse(url=f"{frontend_url}/login?error=Failed+to+fetch+user+profile")
+        userinfo_resp = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_tok}"},
+        )
+        if userinfo_resp.status_code != 200:
+            logger.error("Google userinfo fetch failed: %s", userinfo_resp.text)
+            return RedirectResponse(url=f"{frontend_url}/login?error=Failed+to+fetch+user+profile")
 
-            userinfo = userinfo_resp.json()
-            google_id = str(userinfo.get("id"))
-            email = (userinfo.get("email") or "").lower().strip()
-            name = userinfo.get("name") or email.split("@")[0]
-            picture = userinfo.get("picture") or ""
+        userinfo = userinfo_resp.json()
+        google_id = str(userinfo.get("id"))
+        email = (userinfo.get("email") or "").lower().strip()
+        name = userinfo.get("name") or email.split("@")[0]
+        picture = userinfo.get("picture") or ""
 
-            if not email:
-                return RedirectResponse(url=f"{frontend_url}/login?error=Google+account+missing+email")
+        if not email:
+            return RedirectResponse(url=f"{frontend_url}/login?error=Google+account+missing+email")
 
-            user = await get_user_by_provider(AuthProvider.GOOGLE, google_id)
-            if not user:
-                user = await get_user_by_email(email)
-                if user:
-                    await update_user(user.id, {
-                        "provider": AuthProvider.GOOGLE.value,
-                        "provider_id": google_id,
-                        "avatar_url": user.avatar_url or picture,
-                        "email_verified": True,
-                    })
-                    user = await get_user_by_id(user.id)
-                else:
-                    new_user = UserRecord(
-                        email=email,
-                        full_name=name,
-                        avatar_url=picture,
-                        provider=AuthProvider.GOOGLE,
-                        provider_id=google_id,
-                        email_verified=True,
-                        role=UserRole.USER,
-                        status=UserStatus.ACTIVE,
-                    )
-                    user = await create_user(new_user)
+        user = await get_user_by_provider(AuthProvider.GOOGLE, google_id)
+        if not user:
+            user = await get_user_by_email(email)
+            if user:
+                # Update existing account — no re-fetch, just update the in-memory object
+                updates = {
+                    "provider": AuthProvider.GOOGLE.value,
+                    "provider_id": google_id,
+                    "email_verified": True,
+                }
+                if not user.avatar_url:
+                    updates["avatar_url"] = picture
+                await update_user(user.id, updates)
+                # Apply updates to local object to avoid a second DB round-trip
+                user = UserRecord(
+                    **{**user.model_dump(), **updates}
+                )
+            else:
+                new_user = UserRecord(
+                    email=email,
+                    full_name=name,
+                    avatar_url=picture,
+                    provider=AuthProvider.GOOGLE,
+                    provider_id=google_id,
+                    email_verified=True,
+                    role=UserRole.USER,
+                    status=UserStatus.ACTIVE,
+                )
+                user = await create_user(new_user)
 
-            if not user:
-                return RedirectResponse(url=f"{frontend_url}/login?error=Failed+to+create+user")
+        if not user:
+            return RedirectResponse(url=f"{frontend_url}/login?error=Failed+to+create+user")
 
-            role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
-            jwt_access = create_access_token({"sub": user.id, "email": user.email, "role": role_val})
-            token_ver = getattr(user, "token_version", 1)
-            jwt_refresh = create_refresh_token({"sub": user.id, "email": user.email, "token_version": token_ver})
+        role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
+        jwt_access = create_access_token({"sub": user.id, "email": user.email, "role": role_val})
+        token_ver = getattr(user, "token_version", 1)
+        jwt_refresh = create_refresh_token({"sub": user.id, "email": user.email, "token_version": token_ver})
 
-            await record_audit_log(user.id, LogAction.LOGIN, "User logged in via Google OAuth")
+        # Fire-and-forget audit log — don't block the redirect on a DB write
+        asyncio.create_task(
+            record_audit_log(user.id, LogAction.LOGIN, "User logged in via Google OAuth")
+        )
 
-            return RedirectResponse(
-                url=f"{frontend_url}/auth/callback#access_token={jwt_access}&refresh_token={jwt_refresh}"
-            )
+        return RedirectResponse(
+            url=f"{frontend_url}/auth/callback#access_token={jwt_access}&refresh_token={jwt_refresh}"
+        )
     except Exception as e:
         logger.exception("Unexpected OAuth error: %s", e)
         return RedirectResponse(url=f"{frontend_url}/login?error={urllib.parse.quote(str(e))}")

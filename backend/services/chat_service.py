@@ -162,7 +162,7 @@ async def ask_question(
         if msg.role in ("user", "assistant") and msg.content
     ]
 
-    # 1. Persist user message
+    # 1. Persist user message (fire-and-forget — does not affect TTFT)
     user_msg = models.ChatMessage(
         session_id=sid,
         role="user",
@@ -170,7 +170,7 @@ async def ask_question(
         attachment=attachment,
         user_id=user_id,
     )
-    await models.save_message(user_msg)
+    asyncio.create_task(models.save_message(user_msg))
 
     # 2. Check for direct image attachment or image data
     active_image = image_data or (attachment.get("data_url") or attachment.get("path") if attachment else None)
@@ -553,7 +553,7 @@ async def ask_question_stream(
             if msg.role in ("user", "assistant") and msg.content
         ]
 
-        # 1. Persist user message
+        # 1. Persist user message (fire-and-forget — does not block first SSE token)
         user_msg = models.ChatMessage(
             session_id=sid,
             role="user",
@@ -561,7 +561,7 @@ async def ask_question_stream(
             attachment=attachment,
             user_id=user_id,
         )
-        await models.save_message(user_msg)
+        asyncio.create_task(models.save_message(user_msg))
 
         # Emit session_id immediately so frontend can lock in conversation ID
         yield _sse({"type": "session", "session_id": sid})

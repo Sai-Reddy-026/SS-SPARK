@@ -44,6 +44,8 @@ async def init_user_db(db: Any) -> None:
     except Exception:
         pass
     await _db.users.create_index("username", unique=True, sparse=True)
+    # OAuth provider lookup index — makes Google login sub-millisecond
+    await _db.users.create_index([("provider", 1), ("provider_id", 1)], sparse=True)
 
     # Sessions: scoped to user
     await _db.chat_sessions.create_index([("user_id", 1), ("updated_at", -1)])
@@ -226,14 +228,11 @@ async def create_user(user: UserRecord) -> UserRecord:
 
 async def get_user_by_email(email: str) -> Optional[UserRecord]:
     """Find a user by email (case-insensitive exact point lookup)."""
-    import re
     target = email.lower().strip()
     db = _get_db()
     if db is not None:
+        # Single indexed lookup — emails are normalized to lowercase at creation time
         doc = await db.users.find_one({"email": target})
-        if not doc:
-            # Fallback for un-normalized legacy records
-            doc = await db.users.find_one({"email": {"$regex": f"^{re.escape(target)}$", "$options": "i"}})
         return _doc_to_user(doc) if doc else None
     for u in _mem_users.values():
         if u.email.lower() == target:

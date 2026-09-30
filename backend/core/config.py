@@ -64,7 +64,7 @@ class Settings(BaseSettings):
         description="Routing strategy: 'fast' (lowest latency first, sequential fallback) or 'race' (parallel, first wins). Default: fast",
     )
     AI_REQUEST_TIMEOUT_SECONDS: float = Field(
-        default=8.0,
+        default=5.0,
         description="First-token timeout per provider in seconds before trying next provider",
     )
     AI_PROVIDER_COOLDOWN_SECONDS: float = Field(

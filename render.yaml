@@ -6,7 +6,7 @@ services:
     dockerContext: .
     plan: free
     region: oregon
-    healthCheckPath: /health
+    healthCheckPath: /health/fast
     autoDeploy: true
     envVars:
       - key: MONGO_URI
@@ -67,7 +67,7 @@ services:
       - key: AI_ROUTING_MODE
         value: fast
       - key: AI_REQUEST_TIMEOUT_SECONDS
-        value: "8"
+        value: "5"
       - key: AI_PROVIDER_COOLDOWN_SECONDS
         value: "30"
       - key: GEMINI_MODEL

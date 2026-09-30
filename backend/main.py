@@ -160,6 +160,15 @@ async def lifespan(app: FastAPI):
         except Exception as sync_err:
             logger.warning("Background startup sync error: %s", sync_err)
 
+    # ---- Pre-warm ProviderRouter so first request doesn't pay init cost ----
+    try:
+        from rag.provider_router import get_router
+        _router = get_router()
+        _models = _router.get_candidate_models()
+        logger.info("ProviderRouter pre-warmed. Candidates: %s", _models)
+    except Exception as pw_err:
+        logger.warning("ProviderRouter pre-warm failed (non-fatal): %s", pw_err)
+
     asyncio.create_task(_async_startup_sync())
 
     logger.info("Backend ready ✓  —  FastAPI running, background sync active")
@@ -280,7 +289,7 @@ app.mount("/uploads", StaticFiles(directory=str(_cfg.UPLOAD_DIR)), name="uploads
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 async def health():
-    """Quick health-check endpoint reporting status of LLMs and databases."""
+    """Detailed health-check endpoint reporting status of LLMs and databases."""
     from rag import paperqa_connector as pqa
     from database.models import get_documents, get_db
     from rag.vector_store import get_vector_store
@@ -313,6 +322,13 @@ async def health():
     }
 
 
+@app.get("/health/fast", tags=["Health"])
+@app.get("/api/health/fast", tags=["Health"])
+async def health_fast():
+    """Instant health check \u2014 no DB queries. Used by Render health check to avoid overhead."""
+    return {"status": "ok"}
+
+
 @app.get("/", tags=["Root"])
 async def root():
     return {
@@ -320,6 +336,7 @@ async def root():
         "docs": "/docs",
         "health": "/health",
     }
+
 
 
 # --------------------------------------------------------------------------- #

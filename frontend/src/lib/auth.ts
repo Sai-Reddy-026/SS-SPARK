@@ -191,7 +191,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // Try refresh if access token is expired
+      // If the token is still valid AND we have a cached user, skip the /me round-trip.
+      // This removes a full backend network call from every page load for logged-in users.
+      if (!isTokenExpired(access) && cachedUserStr) {
+        setIsLoading(false);
+        return;
+      }
+
+      // Token is expired — try to refresh it
       let validAccess = access;
       if (isTokenExpired(access)) {
         try {
@@ -218,7 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Fetch fresh user profile from backend
+      // Fetch fresh user profile from backend (only after a token refresh)
       try {
         const response = await fetch(`${API_BASE}/api/auth/me`, {
           headers: { Authorization: `Bearer ${validAccess}` },

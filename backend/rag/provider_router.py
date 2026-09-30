@@ -90,6 +90,9 @@ _EWMA_ALPHA = 0.3
 # Initial assumed latency (ms) - neutral so all providers compete fairly at start
 _INITIAL_LATENCY_MS = 1200.0
 
+# Config cache TTL in seconds — avoids re-reading 15+ env vars per LLM request
+_CONFIG_CACHE_TTL = 5.0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ProviderState - lightweight in-memory runtime state per provider
@@ -192,6 +195,8 @@ class ProviderRouter:
     def __init__(self) -> None:
         self._providers: Dict[str, ProviderState] = {}
         self._initialized = False
+        self._config_cache: Optional[Dict[str, Any]] = None
+        self._config_cache_ts: float = 0.0
 
     # ── Initialization ────────────────────────────────────────────────────────
 
@@ -222,7 +227,11 @@ class ProviderRouter:
                 self._providers[name].enabled = has_key
 
     def _load_config(self) -> Dict[str, Any]:
-        """Read all router-relevant env vars in one pass."""
+        """Read router-relevant env vars, cached for _CONFIG_CACHE_TTL seconds to avoid per-request overhead."""
+        now = time.monotonic()
+        if self._config_cache is not None and (now - self._config_cache_ts) < _CONFIG_CACHE_TTL:
+            return self._config_cache
+
         try:
             from core.config import get_settings
             get_settings().apply_to_env()
@@ -236,7 +245,7 @@ class ProviderRouter:
                     return v
             return ""
 
-        return {
+        cfg = {
             "gemini_key": _get("GEMINI_API_KEY", "GOOGLE_API_KEY"),
             "gemini_key_2": _get("GEMINI_API_KEY_2"),
             "openai_key": _get("OPENAI_API_KEY"),
@@ -255,11 +264,14 @@ class ProviderRouter:
             "openai_model": _get("OPENAI_MODEL"),
             "nvidia_model": _get("NVIDIA_MODEL"),
             "openrouter_model": _get("OPENROUTER_MODEL"),
-            # Routing settings
+            # Routing settings — lower default timeout for faster fallback
             "routing_mode": _get("AI_ROUTING_MODE") or "fast",
-            "timeout_s": float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "8")),
+            "timeout_s": float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "5")),
             "cooldown_s": float(os.getenv("AI_PROVIDER_COOLDOWN_SECONDS", "30")),
         }
+        self._config_cache = cfg
+        self._config_cache_ts = now
+        return cfg
 
     # ── Key rotation ──────────────────────────────────────────────────────────
 

@@ -49,6 +49,55 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = Field(default="", description="OpenRouter API key")
 
     # ------------------------------------------------------------------ #
+    # AI Provider Router — secondary keys for key rotation
+    # ------------------------------------------------------------------ #
+    GEMINI_API_KEY_2: str = Field(default="", description="Secondary Gemini API key for rotation")
+    OPENAI_API_KEY_2: str = Field(default="", description="Secondary OpenAI API key for rotation")
+    NVIDIA_API_KEY_2: str = Field(default="", description="Secondary NVIDIA API key for rotation")
+    OPENROUTER_API_KEY_2: str = Field(default="", description="Secondary OpenRouter API key for rotation")
+
+    # ------------------------------------------------------------------ #
+    # AI Provider Router — routing behaviour
+    # ------------------------------------------------------------------ #
+    AI_ROUTING_MODE: str = Field(
+        default="fast",
+        description="Routing strategy: 'fast' (lowest latency first, sequential fallback) or 'race' (parallel, first wins). Default: fast",
+    )
+    AI_REQUEST_TIMEOUT_SECONDS: float = Field(
+        default=8.0,
+        description="First-token timeout per provider in seconds before trying next provider",
+    )
+    AI_PROVIDER_COOLDOWN_SECONDS: float = Field(
+        default=30.0,
+        description="Cooldown duration in seconds after a provider rate-limit or failure",
+    )
+
+    # ------------------------------------------------------------------ #
+    # AI Provider Router — model name overrides (leave blank to use defaults)
+    # ------------------------------------------------------------------ #
+    GEMINI_MODEL: str = Field(default="", description="Override Gemini model name (e.g. gemini-2.0-flash-lite)")
+    OPENAI_MODEL: str = Field(default="", description="Override OpenAI model name (e.g. gpt-4o-mini)")
+    NVIDIA_MODEL: str = Field(default="", description="Override NVIDIA NIM model name")
+    OPENROUTER_MODEL: str = Field(default="", description="Override OpenRouter model name")
+    CUSTOM_MODEL: str = Field(default="", description="Model string for the custom/4th provider")
+
+    # ------------------------------------------------------------------ #
+    # AI Provider Router — custom / 4th provider (OpenAI-compatible)
+    # ------------------------------------------------------------------ #
+    CUSTOM_PROVIDER_NAME: str = Field(
+        default="",
+        description="Name of the 4th/custom provider (e.g. groq, together, mistral)",
+    )
+    CUSTOM_PROVIDER_BASE_URL: str = Field(
+        default="",
+        description="Base URL for custom OpenAI-compatible endpoint (e.g. https://api.groq.com/openai/v1)",
+    )
+    CUSTOM_PROVIDER_API_KEY: str = Field(
+        default="",
+        description="API key for the custom/4th provider",
+    )
+
+    # ------------------------------------------------------------------ #
     # JWT Authentication
     # ------------------------------------------------------------------ #
     JWT_SECRET_KEY: str = Field(
@@ -258,13 +307,13 @@ class Settings(BaseSettings):
         return self.has_openai or self.has_gemini or self.has_anthropic or self.has_nvidia or self.has_openrouter
 
     def apply_to_env(self) -> None:
-        """Push API keys back into os.environ so PaperQA and LiteLLM pick them up."""
+        """Push API keys back into os.environ so PaperQA, LiteLLM, and ProviderRouter pick them up."""
         if self.OPENROUTER_API_KEY:
             os.environ["OPENROUTER_API_KEY"] = self.OPENROUTER_API_KEY
 
         if self.OPENAI_API_KEY:
             os.environ["OPENAI_API_KEY"] = self.OPENAI_API_KEY
-        
+
         # Sync Gemini keys
         gemini_val = self.GEMINI_API_KEY or self.GOOGLE_API_KEY
         if gemini_val:
@@ -279,6 +328,41 @@ class Settings(BaseSettings):
         if nvidia_val:
             os.environ["NVIDIA_API_KEY"] = nvidia_val
             os.environ["NVIDIA_NIM_API_KEY"] = nvidia_val
+
+        # Sync secondary / rotation keys
+        if self.GEMINI_API_KEY_2:
+            os.environ["GEMINI_API_KEY_2"] = self.GEMINI_API_KEY_2
+        if self.OPENAI_API_KEY_2:
+            os.environ["OPENAI_API_KEY_2"] = self.OPENAI_API_KEY_2
+        if self.NVIDIA_API_KEY_2:
+            os.environ["NVIDIA_API_KEY_2"] = self.NVIDIA_API_KEY_2
+        if self.OPENROUTER_API_KEY_2:
+            os.environ["OPENROUTER_API_KEY_2"] = self.OPENROUTER_API_KEY_2
+
+        # Routing configuration
+        os.environ["AI_ROUTING_MODE"] = self.AI_ROUTING_MODE
+        os.environ["AI_REQUEST_TIMEOUT_SECONDS"] = str(self.AI_REQUEST_TIMEOUT_SECONDS)
+        os.environ["AI_PROVIDER_COOLDOWN_SECONDS"] = str(self.AI_PROVIDER_COOLDOWN_SECONDS)
+
+        # Model overrides
+        if self.GEMINI_MODEL:
+            os.environ["GEMINI_MODEL"] = self.GEMINI_MODEL
+        if self.OPENAI_MODEL:
+            os.environ["OPENAI_MODEL"] = self.OPENAI_MODEL
+        if self.NVIDIA_MODEL:
+            os.environ["NVIDIA_MODEL"] = self.NVIDIA_MODEL
+        if self.OPENROUTER_MODEL:
+            os.environ["OPENROUTER_MODEL"] = self.OPENROUTER_MODEL
+        if self.CUSTOM_MODEL:
+            os.environ["CUSTOM_MODEL"] = self.CUSTOM_MODEL
+
+        # Custom / 4th provider
+        if self.CUSTOM_PROVIDER_NAME:
+            os.environ["CUSTOM_PROVIDER_NAME"] = self.CUSTOM_PROVIDER_NAME
+        if self.CUSTOM_PROVIDER_BASE_URL:
+            os.environ["CUSTOM_PROVIDER_BASE_URL"] = self.CUSTOM_PROVIDER_BASE_URL
+        if self.CUSTOM_PROVIDER_API_KEY:
+            os.environ["CUSTOM_PROVIDER_API_KEY"] = self.CUSTOM_PROVIDER_API_KEY
 
 
 @lru_cache(maxsize=1)

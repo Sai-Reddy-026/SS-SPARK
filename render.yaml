@@ -63,3 +63,34 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      # ── AI Provider Router ─────────────────────────────────────────────
+      - key: AI_ROUTING_MODE
+        value: fast
+      - key: AI_REQUEST_TIMEOUT_SECONDS
+        value: "8"
+      - key: AI_PROVIDER_COOLDOWN_SECONDS
+        value: "30"
+      - key: GEMINI_MODEL
+        value: ""
+      - key: OPENAI_MODEL
+        value: ""
+      - key: NVIDIA_MODEL
+        value: ""
+      - key: OPENROUTER_MODEL
+        value: ""
+      - key: GEMINI_API_KEY_2
+        sync: false
+      - key: OPENAI_API_KEY_2
+        sync: false
+      - key: NVIDIA_API_KEY_2
+        sync: false
+      - key: OPENROUTER_API_KEY_2
+        sync: false
+      - key: CUSTOM_PROVIDER_NAME
+        sync: false
+      - key: CUSTOM_PROVIDER_BASE_URL
+        sync: false
+      - key: CUSTOM_PROVIDER_API_KEY
+        sync: false
+      - key: CUSTOM_MODEL
+        sync: false

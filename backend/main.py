@@ -251,6 +251,7 @@ from api.sessions import router as sessions_router
 from api.analytics import router as analytics_router
 from api.admin import router as admin_router
 from api.notifications import router as notifications_router
+from api.provider_status import router as provider_status_router
 
 app.include_router(auth_router)
 app.include_router(upload_router)
@@ -261,6 +262,7 @@ app.include_router(sessions_router)
 app.include_router(analytics_router)
 app.include_router(admin_router)
 app.include_router(notifications_router)
+app.include_router(provider_status_router)
 
 
 # --------------------------------------------------------------------------- #

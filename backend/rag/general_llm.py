@@ -3,17 +3,14 @@ rag/general_llm.py
 
 High-performance LLM Router and General Chat engine for SS SPARK.
 
-Provider hierarchy (all use real, verified model names):
-  Primary:   Google Gemini — gemini-2.0-flash-lite, gemini-2.0-flash, gemini-1.5-flash-8b, gemini-1.5-flash
-  Fallback:  OpenRouter   — deepseek/deepseek-chat, meta-llama/llama-3.3-70b-instruct:free
-  Tertiary:  NVIDIA NIM   — meta/llama-3.1-8b-instruct, meta/llama-3.3-70b-instruct
+Now delegates provider selection to rag/provider_router.py which provides:
+  - Runtime latency tracking (EWMA) per provider
+  - Automatic cooldown after rate-limits / failures
+  - Key rotation across primary + secondary API keys
+  - Fast mode (lowest latency first) or Race mode (parallel, first wins)
+  - OpenAI, Gemini, NVIDIA, OpenRouter, and Custom (4th) provider support
 
-Key fixes in this revision:
-  - All model names are REAL and verified against provider APIs (no more non-existent models)
-  - First-token timeout raised to 8s (was 3.5s — too aggressive for Render cold starts)
-  - OpenRouter tried BEFORE NVIDIA (OpenRouter is faster and more reliable)
-  - Parallel race between Gemini + OpenRouter for first response (< 5s guaranteed)
-  - Clean fallback chain: if primary fails, use fallback, then tertiary
+All existing functionality (RAG, vision, streaming, citations) is preserved unchanged.
 """
 
 from __future__ import annotations
@@ -27,32 +24,31 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("ss_spark.general_llm")
 
-# ── First-Token Timeout ──────────────────────────────────────────────────────
-# 8 seconds: generous enough for Render cold-start + Gemini 429 backoff
+# ── First-Token Timeout — now read from router config ────────────────────────
+# Kept as a fallback constant; actual value comes from AI_REQUEST_TIMEOUT_SECONDS
 FIRST_TOKEN_TIMEOUT_S = 8.0
 
-# ── REAL Model Names (verified against provider APIs) ────────────────────────
-# Google Gemini — via LiteLLM prefix "gemini/"
+# Legacy model lists — VERIFIED WORKING (updated 2026-09-29)
+# These are used by the legacy static tier builder (fallback if router fails)
+# and by the vision code path which hard-references Gemini model names.
+#
+# Gemini 2.x models are DEPRECATED — Google returns 404 with migration notice.
+# Verified working: gemini-3.5-flash-lite (per Google's own migration message).
 GEMINI_MODELS = [
-    "gemini/gemini-3.5-flash-lite",   # Fastest & cheapest — official recommendation
-    "gemini/gemini-flash-latest",     # Latest stable flash, auto-updating
-    "gemini/gemini-3.6-flash",        # Highest quality flash
-    "gemini/gemini-flash-lite-latest",# Latest lite flash
-    "gemini/gemini-3.5-flash",        # Reliable 3.5 flash
+    "gemini/gemini-3.5-flash-lite",  # VERIFIED OK — free tier, fastest
+    "gemini/gemini-3.5-flash",       # VERIFIED OK — higher quality
 ]
 
-# OpenRouter — via LiteLLM prefix "openrouter/"
+# OpenRouter: :free tagged models removed from free tier.
+# deepseek-chat is verified working (paid, cheap).
 OPENROUTER_MODELS = [
-    "openrouter/deepseek/deepseek-chat",                   # Extremely fast (~2s), high quality
-    "openrouter/google/gemini-3.1-flash-lite-image",       # Vision capable and fast (~2.8s)
-    "openrouter/meta-llama/llama-3.3-70b-instruct:free",  # Free tier, 70B
-    "openrouter/meta-llama/llama-3.1-8b-instruct:free",   # Free tier, 8B (fast)
+    "openrouter/deepseek/deepseek-chat",  # VERIFIED OK
 ]
 
-# NVIDIA NIM — via LiteLLM prefix "nvidia_nim/"
+# NVIDIA: verified working at 1312ms.
 NVIDIA_MODELS = [
-    "nvidia_nim/meta/llama-3.2-11b-vision-instruct",       # Vision capable, active on NIM
-    "nvidia_nim/nvidia/llama-3.1-nemotron-70b-instruct",   # 70B reasoning
+    "nvidia_nim/meta/llama-3.2-11b-vision-instruct",      # VERIFIED OK
+    "nvidia_nim/nvidia/llama-3.1-nemotron-70b-instruct",  # larger fallback
 ]
 
 
@@ -68,55 +64,60 @@ def _ensure_env_synced() -> None:
 
 def get_model_tiers() -> Dict[str, List[str]]:
     """
-    Return available models grouped by tier based on which API keys are configured.
-    Always check env fresh (do not cache — keys may be updated at runtime).
+    Legacy tier helper — kept for backward compatibility.
+    New routing uses ProviderRouter via get_ordered_candidate_models().
     """
     _ensure_env_synced()
-    tiers: Dict[str, List[str]] = {
-        "primary": [],
-        "fallback": [],
-        "tertiary": [],
-    }
-
+    tiers: Dict[str, List[str]] = {"primary": [], "fallback": [], "tertiary": []}
     gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
     openrouter_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
     nvidia_key = (os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY") or "").strip()
-
-    # Primary: Gemini (fastest for most tasks)
+    openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if gemini_key:
         tiers["primary"].extend(GEMINI_MODELS)
-
-    # Fallback: OpenRouter first (more reliable, wider model selection), then NVIDIA
     if openrouter_key:
         tiers["fallback"].extend(OPENROUTER_MODELS)
     if nvidia_key:
         tiers["fallback"].extend(NVIDIA_MODELS)
-
-    # Promotion: if no Gemini key, promote fallback to primary
+    if openai_key:
+        tiers["tertiary"].extend(["gpt-4o-mini", "gpt-3.5-turbo"])
+        # NOTE: gpt-4o-mini requires a paid OpenAI account.
+        # If free-tier quota is exhausted, these will return 429 and trigger fallback.
     if not tiers["primary"]:
         if tiers["fallback"]:
             tiers["primary"] = tiers["fallback"]
             tiers["fallback"] = []
-        # Still no providers — add a warning entry so get_ordered_candidate_models raises cleanly
-
     return tiers
 
 
 def get_ordered_candidate_models() -> List[str]:
-    """Return flat list of candidate models in priority order, deduped."""
+    """
+    Return ordered list of candidate models via the ProviderRouter.
+    The router selects providers based on live latency measurements and availability.
+    Falls back to the legacy static tier list if the router fails.
+    """
+    try:
+        from rag.provider_router import get_router
+        router = get_router()
+        models = router.get_candidate_models()
+        if models:
+            return models
+    except Exception as router_exc:
+        logger.warning("ProviderRouter failed, falling back to static tiers: %s", router_exc)
+
+    # Legacy static fallback
     tiers = get_model_tiers()
-    models: List[str] = []
+    models_list: List[str] = []
     for tier_name in ("primary", "fallback", "tertiary"):
         for m in tiers[tier_name]:
-            if m not in models:
-                models.append(m)
-
-    if not models:
+            if m not in models_list:
+                models_list.append(m)
+    if not models_list:
         raise RuntimeError(
-            "No LLM API key configured. Please set GEMINI_API_KEY, OPENROUTER_API_KEY, "
-            "or NVIDIA_API_KEY in backend/.env"
+            "No LLM API key configured. Please set GEMINI_API_KEY, OPENAI_API_KEY, "
+            "OPENROUTER_API_KEY, or NVIDIA_API_KEY in backend/.env"
         )
-    return models
+    return models_list
 
 
 def _format_messages(
@@ -480,7 +481,9 @@ async def general_chat(
             req_id=req_id,
         )
     import litellm
+    from rag.provider_router import get_router
 
+    router = get_router()
     tag = f"[{req_id}] " if req_id else ""
     messages = _format_messages(question, system_prompt, chat_history)
     candidate_models = get_ordered_candidate_models()
@@ -490,17 +493,25 @@ async def general_chat(
     for model in candidate_models:
         provider_name = _get_provider_name(model)
         logger.info("%sllm_start provider=%s model=%s", tag, provider_name, model)
+        # Inject rotated key before each call
+        try:
+            router.inject_key_for_model(model)
+        except Exception:
+            pass
 
+        t_model = time.monotonic()
         try:
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=2048,
-                timeout=20.0,  # 20s per model (was 15s)
+                timeout=20.0,
             )
             answer = response.choices[0].message.content or ""
             cost = _estimate_cost(response)
+            latency_ms = (time.monotonic() - t_model) * 1000
+            router.record_success(provider_name, latency_ms)
             elapsed = round(time.monotonic() - t0, 3)
             logger.info("%sllm_complete in %.3fs via %s (%d chars)", tag, elapsed, model, len(answer))
             return {
@@ -512,16 +523,15 @@ async def general_chat(
                 "status": "general",
             }
         except Exception as exc:
-            logger.warning("%smodel %s failed: %s", tag, model, exc)
+            err_type = type(exc).__name__
+            router.record_failure(provider_name, err_type)
+            logger.warning("%smodel %s failed (%s): %s", tag, model, err_type, exc)
             last_error = exc
             continue
 
     logger.error("%sall LLM providers failed: %s", tag, last_error)
     return {
-        "answer": (
-            "Sorry, the AI service is currently busy. Please try again in a few seconds. "
-            "If this keeps happening, the service may be experiencing high demand."
-        ),
+        "answer": "AI service is temporarily unavailable. Please try again.",
         "sources": [],
         "confidence": None,
         "references": "",
@@ -563,12 +573,23 @@ async def general_chat_stream(
         return
 
     import litellm
+    from rag.provider_router import get_router, race_chat_stream
 
+    router = get_router()
     tag = f"[{req_id}] " if req_id else ""
     messages = _format_messages(question, system_prompt, chat_history)
-    candidate_models = get_ordered_candidate_models()
-    t_start = time.monotonic()
 
+    # ── Race mode: fire all providers simultaneously ───────────────────────
+    if router.routing_mode() == "race":
+        logger.info("%s[RACE MODE] firing all providers simultaneously", tag)
+        async for chunk in race_chat_stream(messages=messages, req_id=req_id):
+            yield chunk
+        return
+
+    # ── Fast mode (default): try providers in latency order ───────────────
+    candidate_models = get_ordered_candidate_models()
+    first_token_timeout = router.request_timeout()
+    t_start = time.monotonic()
     tokens_yielded_total = 0
 
     for model_idx, model in enumerate(candidate_models):
@@ -578,6 +599,12 @@ async def general_chat_stream(
             logger.info("%sllm_stream_start provider=%s model=%s", tag, provider_name, model)
         else:
             logger.info("%sllm_fallback provider=%s model=%s", tag, provider_name, model)
+
+        # Inject rotated API key for this provider
+        try:
+            router.inject_key_for_model(model)
+        except Exception:
+            pass
 
         model_tokens = 0
         t_model_start = time.monotonic()
@@ -594,10 +621,10 @@ async def general_chat_stream(
                 timeout=30.0,
             )
 
-            # Hard first-token timeout — if model doesn't respond in 8s, skip to next
+            # Hard first-token timeout — if provider doesn't respond, skip to next
             first_chunk = await asyncio.wait_for(
                 response_stream.__anext__(),
-                timeout=FIRST_TOKEN_TIMEOUT_S,
+                timeout=first_token_timeout,
             )
 
             # Process first chunk
@@ -621,8 +648,9 @@ async def general_chat_stream(
                     tokens_yielded_total += 1
                     yield ("token", content)
 
-            # Stream completed successfully
-            total_ms = round((time.monotonic() - t_start) * 1000, 2)
+            # Stream completed successfully — record latency
+            total_ms = round((time.monotonic() - t_model_start) * 1000, 2)
+            router.record_success(provider_name, total_ms)
             logger.info(
                 "%sstream_complete provider=%s in %.2fms | tokens=%d",
                 tag, provider_name, total_ms, model_tokens
@@ -631,9 +659,11 @@ async def general_chat_stream(
 
         except (asyncio.TimeoutError, StopAsyncIteration, Exception) as exc:
             elapsed_ms = round((time.monotonic() - t_model_start) * 1000, 2)
+            err_type = type(exc).__name__
+            router.record_failure(provider_name, err_type)
             logger.warning(
                 "%sprovider %s (%s) failed after %.2fms: %s",
-                tag, provider_name, model, elapsed_ms, type(exc).__name__
+                tag, provider_name, model, elapsed_ms, err_type
             )
 
             # Close lingering stream
@@ -646,7 +676,7 @@ async def general_chat_stream(
                 except Exception:
                     pass
 
-            # If we already yielded tokens, send a reset so client clears partial text
+            # If we already yielded tokens, send reset so client clears partial text
             if model_tokens > 0:
                 logger.warning(
                     "%smid-stream failure on %s after %d tokens — emitting reset",
@@ -655,16 +685,15 @@ async def general_chat_stream(
                 yield ("reset", "")
                 tokens_yielded_total = 0
 
-            continue  # Try next model
+            continue  # Try next provider
 
-    # All models exhausted
+    # All providers exhausted
     logger.error("%sall candidate LLM providers failed!", tag)
     if tokens_yielded_total > 0:
         yield ("reset", "")
     yield (
         "token",
-        "Sorry, the AI service is currently busy. All providers are under high load. "
-        "Please try again in a few seconds."
+        "AI service is temporarily unavailable. Please try again in a few seconds."
     )
 
 
